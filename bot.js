@@ -62,7 +62,7 @@ function isDuplicate(msgId, jid, content) {
 const jidLocks = new Map();
 async function withJidLock(jid, fn) {
   const prev = jidLocks.get(jid) || Promise.resolve();
-  const next = prev.then(fn).catch(() => {});
+  const next = prev.then(fn).catch(() => { });
   jidLocks.set(jid, next);
   await next;
   if (jidLocks.get(jid) === next) jidLocks.delete(jid);
@@ -390,24 +390,29 @@ function _extractLocally(texto, existingInfo = {}, ultimoStep = '') {
   // ── Medidas ────────────────────────────────────────────────────────────
   if (!Array.isArray(info.janelas)) info.janelas = [];
 
-  // Detectar quando cliente não tem medidas → preencher como "a confirmar"
-  // Com contexto: "não sei/tenho" + palavra "medida" OU está no step de medidas E diz "não sei" simples
+  // Detectar quando cliente não tem medidas → preencher como "a confirmar" e NÃO pedir de novo
   const pedindoMedidasCtx = ultimoStep === 'medidas' || ultimoStep === 'medida_faltante';
-  const naoSeiSimples = /^(eu\s+)?n[aã]o\s+sei\.?$|^n[aã]o\s+tenho\.?$|^n[aã]o\s+sei\s+a\s+medida\.?$/i.test(texto.trim());
-  const naoTemMedida =
+  // Respostas negativas simples — aceitas SOMENTE quando o bot já havia perguntado as medidas
+  const naoSeiSimples = /^(eu\s+)?n[aã]o\s+(sei|tenho)\.?$|^n[aã]o\.?$|^não\.?$|^nao\.?$|^n[aã]o\s+sei\s+a\s+medida\.?$/i.test(texto.trim());
+  // Respostas negativas explícitas (com a palavra "medida") — válidas em qualquer contexto
+  const naoTemMedidaExplicita =
     /n[aã]o\s+(?:sei|tenho|lembro|possuo|consigo)[^.!?]*medidas?/i.test(texto) ||
     /sem\s+medidas?/i.test(textoLower) ||
     /medidas?[^.!?]*n[aã]o\s+(?:sei|tenho)/i.test(textoLower) ||
     /n[aã]o\s+tenho\s+as[.\s]+medidas?/i.test(texto) ||
-    (pedindoMedidasCtx && naoSeiSimples); // "Eu não sei" quando bot perguntou medida
+    /n[aã]o\s+tenho\s+(?:a|essa|essa)\s+medida/i.test(texto) ||
+    /j[aá]\s+disse\s+que\s+n[aã]o\s+(?:sei|tenho)/i.test(textoLower);
+  const naoTemMedida = naoTemMedidaExplicita || (pedindoMedidasCtx && naoSeiSimples);
 
   if (naoTemMedida && info.quantidade_janelas && info.janelas.length < info.quantidade_janelas) {
     const qtd = info.quantidade_janelas;
     while (info.janelas.length < qtd) {
       info.janelas.push({ medida: 'a confirmar', numero: info.janelas.length + 1, folhas: '?' });
     }
+    // Marcar que medidas já foram tratadas para não perguntar de novo
+    info._medidas_dispensadas = true;
     extraiu = true;
-    console.log(`🔍 Medidas: cliente não tem → ${qtd} janela(s) como "a confirmar"`);
+    console.log(`🔍 Medidas: cliente não tem → ${qtd} janela(s) como "a confirmar" (_medidas_dispensadas=true)`);
   } else {
     // Aceita: 1x1, 1.5x2, 1,2x0,8, "1 por 1", "1.5 por 2"
     const medidaMatches = texto.match(
@@ -443,8 +448,8 @@ function _extractLocally(texto, existingInfo = {}, ultimoStep = '') {
       info.pelicula_desejada = 'segurança'; extraiu = true;
       console.log('🔍 Película (local): segurança');
     } else if (/\bn[aã]o\s+sei\b|\bnão\s+faço\s+ideia\b/.test(textoLower) &&
-               !/medid[ao]|tamanho|dimens[aã]o|altura|largura|metros?|cm\b/i.test(textoLower) &&
-               !pedindoMedidasCtx) {
+      !/medid[ao]|tamanho|dimens[aã]o|altura|largura|metros?|cm\b/i.test(textoLower) &&
+      !pedindoMedidasCtx) {
       // Só marca "não sei" película se: sem palavras de medida E não estava perguntando medidas
       info.pelicula_desejada = 'não sei'; extraiu = true;
       console.log('🔍 Película (local): não sei');
@@ -471,38 +476,33 @@ async function _extractWithLLM(texto, existingInfo = {}) {
 
   if (faltando.length === 0) return { extracted: {}, faltando: [] };
 
-  const systemPrompt = `Você é um assistente de vendas para "Películas Brasil", uma empresa de películas de proteção solar e privacidade.
+  const systemPrompt = `Você é um extrator de dados estruturados para uma empresa de insulfilm chamada "Películas Brasil" em João Pessoa, PB.
 
-TAREFA: Extrair dados da mensagem do cliente em JSON válido.
+Sua ÚNICA função é analisar a mensagem do cliente e retornar um JSON com os campos encontrados.
 
-CAMPOS A EXTRAIR:
-- nome: Nome do cliente (string)
-- bairro: Bairro de João Pessoa onde ele mora (string, em minúsculas)
-- tipo_imovel: Tipo de imóvel - casa, apartamento, comercial (string, uma opção apenas)
-- problema_principal: Problema que ele quer resolver - calor, privacidade, claridade, estetica (string, uma opção)
-- quantidade_janelas: Número de janelas/superfícies (número inteiro)
-- pelicula_desejada: Tipo de película desejada - fumê, espelhada, nano cerâmica, fosca, segurança, não sei (string)
+REGRAS RÍGIDAS:
+- Retorne SOMENTE JSON válido, sem texto, sem explicação, sem markdown
+- NÃO invente dados que não estejam claramente na mensagem
+- NÃO preencha campos que não foram mencionados pelo cliente
+- NÃO use informações de mensagens anteriores, apenas o texto atual
+- Se um campo não está na mensagem, simplesmente não inclua no JSON
+- nome: apenas se o cliente disse o nome dele (não o nome de outras pessoas)
+- bairro: apenas bairros reais de João Pessoa/PB, em letras minúsculas. Não invente bairros.
+- tipo_imovel: APENAS uma das 3 opções exatas: "casa", "apartamento" ou "comercial"
+- problema_principal: APENAS uma das 4 opções exatas: "calor", "privacidade", "claridade" ou "estetica"
+- quantidade_janelas: apenas se o cliente citou um número de janelas/portas/superfícies (número inteiro)
+- pelicula_desejada: APENAS uma das opções: "fumê", "espelhada", "nano cerâmica", "fosca", "segurança" ou "não sei"
 
-Opções tipo_imovel: casa, apartamento, comercial
-Opções problema_principal: calor, privacidade, claridade, estetica
-Opções pelicula: fumê, espelhada, nano cerâmica, fosca, segurança, não sei
-
-IMPORTANTE:
-- Retorne APENAS JSON válido, sem markdown ou formatação extra
-- Se não encontrar um campo, omita-o (não coloque null)
-- Nomes de bairros: sempre minúsculas
-- Seja conservador: só extraia se tiver certeza
-
-Mensagem do cliente:
+Mensagem do cliente para analisar:
 "${texto}"
 
-Dados já extraídos localmente:
+Dados já conhecidos (NÃO repita estes no JSON, apenas extraia os NOVOS campos faltando):
 ${JSON.stringify(existingInfo, null, 2)}
 
-Campos faltando:
+Campos que ainda faltam e devem ser extraídos SE presentes na mensagem:
 ${faltando.join(', ')}
 
-Retorne JSON com apenas os campos faltando que conseguiu extrair:`;
+JSON (apenas os campos novos encontrados na mensagem):`;
 
   try {
     const response = await groq.chat.completions.create({
@@ -576,14 +576,15 @@ function _getNextStep(jid) {
 
   // Consultive flow — ask for nome and bairro separately if one is already known
   if (!info.nome && !info.bairro) return { step: 'nome_bairro', text: pickTemplate('pedir_nome_bairro') };
-  if (!info.nome) return { step: 'nome', text: `Pode me dizer seu *nome*, ${info.bairro}? 😊` };
-  if (!info.bairro) return { step: 'bairro', text: `${nome}, em qual *bairro* de João Pessoa você está? 📍` };
+  if (!info.nome) return { step: 'nome', text: `Pode me dizer seu * nome *, ${info.bairro}? 😊` };
+  if (!info.bairro) return { step: 'bairro', text: `${nome}, em qual * bairro * de João Pessoa você está ? 📍` };
   if (!info.tipo_imovel) return { step: 'tipo_imovel', text: pickTemplate('pedir_tipo_imovel', { nome }) };
   if (!info.quantidade_janelas) return { step: 'quantidade', text: pickTemplate('pedir_quantidade', { nome }) };
 
   // Medidas: pergunta UMA ÚNICA VEZ (opcional — cliente pode não saber)
-  // Se já perguntou (_medidas_solicitadas), não perguntar mais independente do que o cliente disse
-  if (!conv._medidas_solicitadas) {
+  // Não perguntar se: já perguntou (_medidas_solicitadas) OU cliente dispensou (_medidas_dispensadas)
+  const mediasJaResolvidas = conv._medidas_solicitadas || info._medidas_dispensadas;
+  if (!mediasJaResolvidas) {
     const qtd = info.quantidade_janelas;
     const temMedidasReais = Array.isArray(info.janelas) && info.janelas.some(j => j.medida && /\d/.test(j.medida));
     if (!temMedidasReais) {
@@ -616,7 +617,7 @@ function buildOwnerSummary(jid, conv) {
 
   const dataInicio = conv.data_inicio ? new Date(conv.data_inicio).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : 'desconhecido';
 
-  return `🔔 *NOVO LEAD — Películas Brasil*
+  return `🔔 * NOVO LEAD — Películas Brasil *
 
 👤 Cliente: ${info.nome || 'N/I'}
 📍 Bairro: ${info.bairro || 'N/I'}
@@ -625,12 +626,12 @@ function buildOwnerSummary(jid, conv) {
 
 ${problemaEmoji[info.problema_principal] || '🎯'} Problema: ${problemaLabel[info.problema_principal] || info.problema_principal || 'N/I'}
 🎬 Película indicada: ${pelicula}
-🪟 Qt. superfícies: ${info.quantidade_janelas || 'N/I'}
+🪟 Qt.superfícies: ${info.quantidade_janelas || 'N/I'}
 
 ${janelasText || '📐 Medidas: N/I'}
 
 📸 Fotos: ${info.fotos_recebidas === true ? 'Sim ✅' : info.fotos_recebidas === 'pendente' ? 'Pendente ⏳' : 'Não ❌'}
-⏱ Início: ${dataInicio}`;
+⏱ Início: ${dataInicio} `;
 }
 
 // ─── ENVIAR SAUDAÇÃO COM BOTÕES ────────────────────────────────────────────
@@ -671,7 +672,7 @@ async function _sendBoasVindasComBotoes(jid, textoBoasVindas) {
       await sock.sendMessage(jid, {
         text: textoBoasVindas,
         buttons: [
-          { buttonId: 'btn_sim_bot',      buttonText: { displayText: '✅ Sim, pode tentar!' },       type: 1 },
+          { buttonId: 'btn_sim_bot', buttonText: { displayText: '✅ Sim, pode tentar!' }, type: 1 },
           { buttonId: 'btn_nao_aguardar', buttonText: { displayText: '⏳ Não, vou aguardar o Alex' }, type: 1 }
         ],
         headerType: 1,
@@ -710,8 +711,8 @@ async function _sendBoasVindasComBotoes(jid, textoBoasVindas) {
 async function _sendProblemaComBotoes(jid) {
   const nome = (state.conversations[jid]?.informacoes_coletadas?.nome || '').split(' ')[0];
   const texto = nome
-    ? `${nome}, qual o principal *problema* que você quer resolver com a película? 🎯`
-    : `Qual o principal *problema* que você quer resolver com a película? 🎯`;
+    ? `${nome}, qual o principal * problema * que você quer resolver com a película ? 🎯`
+    : `Qual o principal * problema * que você quer resolver com a película ? 🎯`;
 
   const min = state.settings.delay_min || 2000;
   const max = state.settings.delay_max || 5000;
@@ -791,26 +792,26 @@ async function processFlow(jid, userMessage = '') {
     const msgLower = (userMessage || '').toLowerCase().trim();
 
     const escolheuSim =
-      msgLower === 'btn_sim_bot'     ||
-      msgLower === '1'               ||
-      msgLower === 'sim'             ||
-      msgLower === 'ok'              ||
-      msgLower === 'pode'            ||
-      msgLower === 'pode sim'        ||
-      msgLower === 'claro'           ||
+      msgLower === 'btn_sim_bot' ||
+      msgLower === '1' ||
+      msgLower === 'sim' ||
+      msgLower === 'ok' ||
+      msgLower === 'pode' ||
+      msgLower === 'pode sim' ||
+      msgLower === 'claro' ||
       msgLower.includes('sim, pode') ||
-      msgLower.includes('✅')        ||
+      msgLower.includes('✅') ||
       msgLower.startsWith('sim');
 
     const escolheuNao =
       msgLower === 'btn_nao_aguardar' ||
-      msgLower === '2'                ||
-      msgLower === 'não'              ||
-      msgLower === 'nao'              ||
-      msgLower.includes('aguardar')   ||
-      msgLower.includes('aguarda')    ||
-      msgLower.includes('⏳')         ||
-      msgLower.includes('não, vou')   ||
+      msgLower === '2' ||
+      msgLower === 'não' ||
+      msgLower === 'nao' ||
+      msgLower.includes('aguardar') ||
+      msgLower.includes('aguarda') ||
+      msgLower.includes('⏳') ||
+      msgLower.includes('não, vou') ||
       msgLower.includes('nao, vou');
 
     if (escolheuSim) {
@@ -825,10 +826,10 @@ async function processFlow(jid, userMessage = '') {
       if (infoAtual.problema_principal) {
         // Problema já conhecido → marcar como selecionado e enviar recomendação
         updateConversation(jid, { _aguardando_problema: false, _problema_selecionado: true });
-        const recomKey = `recomendacao_${infoAtual.problema_principal}`;
+        const recomKey = `recomendacao_${infoAtual.problema_principal} `;
         const recomText = TEMPLATES[recomKey]
           ? pickTemplate(recomKey, { nome: nomeAtual })
-          : `Ótimo${nomeAtual ? ', ' + nomeAtual : ''}! 😊`;
+          : `Ótimo${nomeAtual ? ', ' + nomeAtual : ''} ! 😊`;
         await sendWithDelay(jid, { text: recomText });
 
         // Verificar se o fluxo já está completo
@@ -877,12 +878,12 @@ async function processFlow(jid, userMessage = '') {
       // Notificar o dono via WhatsApp
       const ownerNumber = process.env.OWNER_NUMBER;
       if (ownerNumber && !ownerNumber.includes('X')) {
-        const ownerJid = `${ownerNumber}@s.whatsapp.net`;
+        const ownerJid = `${ownerNumber} @s.whatsapp.net`;
         const numero = jid.replace('@s.whatsapp.net', '');
         try {
           await new Promise(r => setTimeout(r, 1500));
           await sock.sendMessage(ownerJid, {
-            text: `⏳ *Cliente aguardando atendimento humano*\n\nNúmero: ${numero}\nCliente escolheu aguardar o Alex em vez do bot.\n\nResponda diretamente para este número no WhatsApp.`
+            text: `⏳ * Cliente aguardando atendimento humano *\n\nNúmero: ${numero} \nCliente escolheu aguardar o Alex em vez do bot.\n\nResponda diretamente para este número no WhatsApp.`
           });
         } catch (e) {
           console.warn('⚠️ Não foi possível notificar o dono:', e.message);
@@ -893,7 +894,7 @@ async function processFlow(jid, userMessage = '') {
 
     // Resposta não reconhecida → lembrar as opções
     await sendWithDelay(jid, {
-      text: `Por favor, escolha uma das opções:\n\n*1* — ✅ Sim, pode tentar!\n*2* — ⏳ Não, vou aguardar o Alex`
+      text: `Por favor, escolha uma das opções: \n\n * 1 * — ✅ Sim, pode tentar!\n * 2 * — ⏳ Não, vou aguardar o Alex`
     });
     return true;
   }
@@ -921,7 +922,7 @@ async function processFlow(jid, userMessage = '') {
       });
 
       // Send recommendation
-      const recomKey = `recomendacao_${problema}`;
+      const recomKey = `recomendacao_${problema} `;
       const nome = (infoNow.nome || '').split(' ')[0];
       const recomText = TEMPLATES[recomKey] ? pickTemplate(recomKey, { nome }) : `Ótimo! Vamos ver o que você precisa!`;
       await sendWithDelay(jid, { text: recomText });
@@ -939,7 +940,7 @@ async function processFlow(jid, userMessage = '') {
       // Didn't recognize → remind options
       if (userMessage && userMessage.trim()) {
         await sendWithDelay(jid, {
-          text: `Por favor, escolha uma das opções:\n*1* — 🌡️ Calor excessivo\n*2* — 👁️ Privacidade\n*3* — ☀️ Excesso de claridade\n*4* — 🎨 Estética / decoração`
+          text: `Por favor, escolha uma das opções: \n * 1 * — 🌡️ Calor excessivo\n * 2 * — 👁️ Privacidade\n * 3 * — ☀️ Excesso de claridade\n * 4 * — 🎨 Estética / decoração`
         });
       }
     }
@@ -962,7 +963,7 @@ async function processFlow(jid, userMessage = '') {
     // ── WELCOME PERSONALIZADO: reagir ao que o cliente escreveu ──────────
     const saudacao = getSaudacao();
     const nome1 = infoExtracted.nome ? infoExtracted.nome.split(' ')[0] : '';
-    const cumprimento = nome1 ? `Olá, ${nome1}! ${saudacao} 😊` : `Olá! ${saudacao.charAt(0).toUpperCase() + saudacao.slice(1)} 😊`;
+    const cumprimento = nome1 ? `Olá, ${nome1} !${saudacao} 😊` : `Olá! ${saudacao.charAt(0).toUpperCase() + saudacao.slice(1)} 😊`;
 
     // Detectar tipo de abertura
     const msgTrim = (userMessage || '').trim();
@@ -972,45 +973,45 @@ async function processFlow(jid, userMessage = '') {
 
     // Montar o que o cliente já informou (para citar no welcome)
     const jaInformou = [];
-    if (infoExtracted.quantidade_janelas) jaInformou.push(`*${infoExtracted.quantidade_janelas} superfície(s)*`);
+    if (infoExtracted.quantidade_janelas) jaInformou.push(`* ${infoExtracted.quantidade_janelas} superfície(s) * `);
     const probLabel = { calor: 'reduzir o calor 🌡️', privacidade: 'privacidade 👁️', claridade: 'reduzir claridade ☀️', estetica: 'estética 🎨' };
     if (infoExtracted.problema_principal) jaInformou.push(probLabel[infoExtracted.problema_principal] || infoExtracted.problema_principal);
-    if (infoExtracted.tipo_imovel) jaInformou.push(`*${infoExtracted.tipo_imovel}*`);
-    if (infoExtracted.bairro && !nome1) jaInformou.push(`bairro *${infoExtracted.bairro}*`);
+    if (infoExtracted.tipo_imovel) jaInformou.push(`* ${infoExtracted.tipo_imovel}* `);
+    if (infoExtracted.bairro && !nome1) jaInformou.push(`bairro * ${infoExtracted.bairro}* `);
 
     let boasVindas;
 
     if (ehAutomotivo) {
       // Automotivo — avisa logo que não é o foco
       boasVindas =
-        `${cumprimento}\n\n` +
-        `Nosso foco é película *residencial e comercial* 🏠\n\n` +
-        `Mas se quiser, o Alex pode te orientar melhor. Quer que eu registre seu contato?`;
+        `${cumprimento} \n\n` +
+        `Nosso foco é película * residencial e comercial * 🏠\n\n` +
+        `Mas se quiser, o Alex pode te orientar melhor.Quer que eu registre seu contato ? `;
     } else if (ehPerguntaPreco) {
       // Pergunta de preço — responde a altura e pede para continuar
       boasVindas =
-        `${cumprimento}\n\n` +
+        `${cumprimento} \n\n` +
         `O preço depende do tipo de película e das medidas — o Alex faz o orçamento personalizado! 💰\n\n` +
-        `Posso coletar algumas informações para agilizar o atendimento. Quer que eu continue?`;
+        `Posso coletar algumas informações para agilizar o atendimento.Quer que eu continue?`;
     } else if (ehSoSaudacao) {
       // Só uma saudação — welcome genérico
       boasVindas =
-        `${cumprimento} Tudo bem?\n\n` +
-        `Aqui é o assistente do Alex da *Películas Brasil* 🪟\n` +
+        `${cumprimento} Tudo bem ?\n\n` +
+        `Aqui é o assistente do Alex da * Películas Brasil * 🪟\n` +
         `Ele está em atendimento agora, mas posso agilizar pra você!\n\n` +
-        `Quer que eu te ajude?`;
+        `Quer que eu te ajude ? `;
     } else if (jaInformou.length > 0) {
       // Cliente já passou informações — citar e agradecer
       boasVindas =
-        `${cumprimento}\n\n` +
+        `${cumprimento} \n\n` +
         `Ótimo! Vi que você quer película para ${jaInformou.join(', ')}. 👍\n\n` +
-        `Sou o assistente do Alex da *Películas Brasil* — posso continuar coletando as informações para agilizar o orçamento!\n\n` +
-        `Posso seguir?`;
+        `Sou o assistente do Alex da * Películas Brasil * — posso continuar coletando as informações para agilizar o orçamento!\n\n` +
+        `Posso seguir ? `;
     } else {
       // Mensagem com intenção mas sem dados extraídos (pergunta genérica, etc.)
       boasVindas =
-        `${cumprimento}\n\n` +
-        `Aqui é o assistente do Alex da *Películas Brasil* 🪟✨\n` +
+        `${cumprimento} \n\n` +
+        `Aqui é o assistente do Alex da * Películas Brasil * 🪟✨\n` +
         `Posso ajudar a agilizar seu atendimento enquanto o Alex finaliza outro cliente!\n\n` +
         `Quer que eu continue?`;
     }
@@ -1091,15 +1092,15 @@ async function processMessage(jid, userMessage) {
 
   let response;
   if (ehReclamacao) {
-    response = `Desculpa, ${nome || 'me desculpe'}! 😅 Vou direto ao ponto:\n\n${next.text}`;
+    response = `Desculpa, ${nome || 'me desculpe'} ! 😅 Vou direto ao ponto: \n\n${next.text} `;
   } else if (disseSemMedidas) {
     // Resposta empática + próximo passo (fotos, se medidas preenchidas como "a confirmar")
-    response = `Tudo bem, ${nome || ''}! 😊 O Alex consegue medir no momento da visita.\n\n${next.text}`.trim();
+    response = `Tudo bem, ${nome || ''} ! 😊 O Alex consegue medir no momento da visita.\n\n${next.text} `.trim();
   } else if (ehSaudacao || ehCurto || stepPedindoMedidas) {
     response = next.text;
   } else {
     const confirmacao = pickTemplate('confirmacao_dados', { nome });
-    response = `${confirmacao}\n\n${next.text}`;
+    response = `${confirmacao} \n\n${next.text} `;
   }
 
   // Salvar qual foi a última pergunta enviada (para interpretar respostas ambíguas depois)
@@ -1130,7 +1131,7 @@ async function _handleFlowComplete(jid) {
 
   const ownerNumber = process.env.OWNER_NUMBER;
   if (ownerNumber && !ownerNumber.includes('X')) {
-    const ownerJid = `${ownerNumber}@s.whatsapp.net`;
+    const ownerJid = `${ownerNumber} @s.whatsapp.net`;
     const summary = buildOwnerSummary(jid, state.conversations[jid]);
     try {
       await new Promise(r => setTimeout(r, 2000));
@@ -1144,7 +1145,7 @@ async function _handleFlowComplete(jid) {
 // ─── HANDLER DE ÁUDIO ────────────────────────────────────────────────────
 async function handleAudio(jid, msg) {
   try {
-    console.log(`🎙️ Áudio recebido de ${jid}`);
+    console.log(`🎙️ Áudio recebido de ${jid} `);
     const buffer = await downloadMediaMessage(msg, 'buffer', {});
     const tmpPath = path.join(__dirname, `tmp_audio_${Date.now()}.ogg`);
     fs.writeFileSync(tmpPath, buffer);
@@ -1183,7 +1184,7 @@ async function handleImage(jid, msg) {
     fs.ensureDirSync(dir);
     const buffer = await downloadMediaMessage(msg, 'buffer', {});
     fs.writeFileSync(path.join(dir, `foto_${Date.now()}.jpg`), buffer);
-    console.log(`📸 Foto salva de ${jid}`);
+    console.log(`📸 Foto salva de ${jid} `);
 
     const conv = state.conversations[jid];
     if (conv) {
@@ -1234,7 +1235,7 @@ async function handleVideo(jid, msg) {
 // ─── HANDLER DE DOCUMENTO ──────────────────────────────────────────────
 async function handleDocument(jid) {
   await sendWithDelay(jid, { text: 'Recebi o arquivo! Se precisar, pode descrever por texto também. 😊' });
-  console.log(`📄 Documento recebido de ${jid}`);
+  console.log(`📄 Documento recebido de ${jid} `);
 }
 
 // ─── HANDLER PRINCIPAL DE MENSAGENS ─────────────────────────────────────────
@@ -1348,7 +1349,7 @@ async function _processMessage(msg) {
 
   // Reiniciar conversa
   if (text && text.trim().toLowerCase() === 'reiniciar') {
-    console.log(`🔄 Reinício: ${jid}`);
+    console.log(`🔄 Reinício: ${jid} `);
     updateConversation(jid, {
       cliente: null, bairro: null,
       data_inicio: new Date().toISOString(), data_fim: null,
@@ -1374,7 +1375,7 @@ async function _processMessage(msg) {
   if (listResp) {
     const rowId = listResp.singleSelectReply?.selectedRowId || '';
     const titulo = listResp.title || rowId;
-    console.log(`📋 Lista selecionada: rowId="${rowId}" título="${titulo}"`);
+    console.log(`📋 Lista selecionada: rowId = "${rowId}" título = "${titulo}"`);
     await processFlow(jid, rowId || titulo);
     return;
   }
@@ -1384,7 +1385,7 @@ async function _processMessage(msg) {
   if (buttonResponse) {
     const buttonId = buttonResponse.selectedButtonId || '';
     const buttonText = buttonResponse.selectedDisplayText || buttonId;
-    console.log(`🔘 Botão clicado: id="${buttonId}" texto="${buttonText}"`);
+    console.log(`🔘 Botão clicado: id = "${buttonId}" texto = "${buttonText}"`);
     await processFlow(jid, buttonId || buttonText);
     return;
   }
@@ -1395,7 +1396,7 @@ async function _processMessage(msg) {
     try {
       const params = JSON.parse(interactiveResp.nativeFlowResponseMessage?.paramsJson || '{}');
       const buttonId = params.id || '';
-      console.log(`🔘 Botão interativo clicado: id="${buttonId}"`);
+      console.log(`🔘 Botão interativo clicado: id = "${buttonId}"`);
       await processFlow(jid, buttonId);
     } catch (e) {
       console.warn('⚠️ Erro ao parsear interactiveResponseMessage:', e.message);
@@ -1430,7 +1431,7 @@ setInterval(() => {
     if (conv.resumo_enviado) return;
     const minutesInactive = (now - conv.lastActivity) / 60000;
     if (minutesInactive >= 30) {
-      console.log(`⏰ Conversa reiniciada por inatividade: ${jid}`);
+      console.log(`⏰ Conversa reiniciada por inatividade: ${jid} `);
       updateConversation(jid, {
         _boas_vindas_enviado: false, _aguardando_escolha_inicial: false,
         _boas_vindas_confirmada: false, _aguardando_problema: false,
@@ -1488,7 +1489,7 @@ async function startBot(io) {
 
       if (connection === 'open') {
         const number = sock.user?.id?.split(':')[0] || 'desconhecido';
-        console.log(`✅ WhatsApp conectado: ${number}`);
+        console.log(`✅ WhatsApp conectado: ${number} `);
         state.connected = true;
         state.connectedNumber = number;
         io.emit('connection_status', { status: 'connected', number });
@@ -1498,7 +1499,7 @@ async function startBot(io) {
         state.connected = false;
         state.connectedNumber = null;
         const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
-        console.log(`🔌 Conexão fechada. Motivo: ${reason}`);
+        console.log(`🔌 Conexão fechada.Motivo: ${reason} `);
         io.emit('connection_status', { status: 'disconnected', reason });
 
         if (reason === DisconnectReason.loggedOut) {
