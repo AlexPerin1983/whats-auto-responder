@@ -1,0 +1,1134 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Películas Brasil — Painel WhatsApp</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --surface2: #273549;
+      --border: #334155;
+      --text: #e2e8f0;
+      --text2: #94a3b8;
+      --green: #22c55e;
+      --yellow: #f59e0b;
+      --red: #ef4444;
+      --blue: #3b82f6;
+      --purple: #a855f7;
+      --radius: 12px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── HEADER ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .logo { font-size: 18px; font-weight: 700; color: var(--green); }
+    .logo span { color: var(--text2); font-weight: 400; font-size: 14px; margin-left: 8px; }
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+    .dot.green  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .dot.yellow { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+    .dot.red    { background: var(--red); box-shadow: 0 0 6px var(--red); animation: none; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+
+    /* ── MAIN LAYOUT ── */
+    .main {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── SIDEBAR ── */
+    .sidebar {
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      padding: 16px;
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+    .card-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--text2);
+      margin-bottom: 12px;
+      font-weight: 600;
+    }
+
+    /* QR Code */
+    #qr-area { text-align: center; }
+    #qr-img {
+      width: 200px; height: 200px;
+      border-radius: 8px;
+      background: #fff;
+      display: none;
+      margin: 0 auto 10px;
+    }
+    #qr-placeholder {
+      width: 200px; height: 200px;
+      background: var(--bg);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 8px;
+      margin: 0 auto 10px;
+      color: var(--text2);
+      font-size: 13px;
+      text-align: center;
+      padding: 16px;
+    }
+    #qr-placeholder .icon { font-size: 32px; }
+    #connected-info { display: none; text-align: center; padding: 8px; }
+    #connected-info .phone { font-size: 15px; font-weight: 600; color: var(--green); }
+    #connected-info .label { font-size: 12px; color: var(--text2); }
+
+    /* Botão do bot */
+    #btn-toggle-bot {
+      width: 100%;
+      padding: 12px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 700;
+      transition: all .2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    #btn-toggle-bot.active { background: var(--red); color: #fff; }
+    #btn-toggle-bot.paused { background: var(--green); color: #fff; }
+    #btn-toggle-bot:hover { opacity: .85; transform: translateY(-1px); }
+
+    /* Contadores */
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .stat-row:last-child { border-bottom: none; }
+    .stat-val { font-weight: 700; color: var(--blue); }
+    .stat-val.warn { color: var(--yellow); }
+    .stat-val.danger { color: var(--red); }
+
+    /* Configurações */
+    .settings-grid { display: grid; gap: 10px; }
+    label { font-size: 12px; color: var(--text2); display: block; margin-bottom: 4px; }
+    input[type=text], input[type=number], input[type=time] {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 7px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    input:focus { outline: none; border-color: var(--blue); }
+    .settings-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    #btn-save-settings {
+      width: 100%;
+      margin-top: 4px;
+      padding: 8px;
+      border-radius: 6px;
+      border: none;
+      background: var(--blue);
+      color: #fff;
+      font-size: 13px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    #btn-save-settings:hover { opacity: .85; }
+
+    /* ── CONTEÚDO PRINCIPAL ── */
+    .content {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Lista de conversas */
+    .conversations-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .section-title { font-size: 15px; font-weight: 700; }
+    .section-count {
+      background: var(--blue);
+      color: #fff;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-weight: 700;
+    }
+
+    #conversations-list { display: flex; flex-direction: column; gap: 10px; }
+
+    /* Card de conversa */
+    .conv-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      transition: border-color .2s;
+    }
+    .conv-card:hover { border-color: var(--blue); }
+    .conv-card.humano { border-left: 3px solid var(--yellow); }
+    .conv-card.encerrada { opacity: .6; }
+
+    .conv-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .conv-name { font-weight: 600; font-size: 14px; }
+    .conv-time { font-size: 11px; color: var(--text2); }
+
+    .conv-preview {
+      font-size: 13px;
+      color: var(--text2);
+      margin-bottom: 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .conv-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .badge {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-weight: 600;
+    }
+    .badge.bot    { background: rgba(34,197,94,.15); color: var(--green); border: 1px solid rgba(34,197,94,.3); }
+    .badge.human  { background: rgba(245,158,11,.15); color: var(--yellow); border: 1px solid rgba(245,158,11,.3); }
+    .badge.closed { background: rgba(148,163,184,.1); color: var(--text2); border: 1px solid var(--border); }
+    .activity-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .activity-dot.active { background: var(--green); }
+    .activity-dot.inactive { background: #475569; }
+
+    /* Botões de ação */
+    .conv-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .btn-action {
+      padding: 5px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      font-size: 12px;
+      cursor: pointer;
+      transition: all .15s;
+      font-weight: 500;
+    }
+    .btn-action:hover { background: var(--surface2); }
+    .btn-action.assume  { border-color: var(--yellow); color: var(--yellow); }
+    .btn-action.assume:hover { background: rgba(245,158,11,.1); }
+    .btn-action.return  { border-color: var(--green); color: var(--green); }
+    .btn-action.return:hover { background: rgba(34,197,94,.1); }
+    .btn-action.close   { border-color: #475569; color: var(--text2); }
+    .btn-action.success { background: rgba(34,197,94,.15); border-color: var(--green); color: var(--green); font-weight: 700; }
+    .btn-action.fail    { background: rgba(239,68,68,.15); border-color: var(--red); color: var(--red); font-weight: 700; }
+    .btn-action.restart { border-color: #6366f1; color: #6366f1; }
+    .btn-action.restart:hover { background: rgba(99,102,241,.1); }
+    .btn-action.copy   { border-color: #0ea5e9; color: #0ea5e9; }
+    .btn-action.copy:hover { background: rgba(14,165,233,.1); }
+
+    /* Modal de chat */
+    #chat-modal {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,.7); z-index: 1000;
+      align-items: center; justify-content: center;
+    }
+    #chat-modal.open { display: flex; }
+    #chat-modal-box {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); width: 560px; max-width: 95vw;
+      max-height: 80vh; display: flex; flex-direction: column;
+    }
+    #chat-modal-header {
+      padding: 14px 18px; border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    #chat-modal-title { font-weight: 700; font-size: 15px; }
+    #chat-modal-close {
+      background: none; border: none; color: var(--text2);
+      font-size: 20px; cursor: pointer; line-height: 1;
+    }
+    #chat-modal-close:hover { color: var(--text); }
+    #chat-modal-actions {
+      padding: 10px 18px; border-bottom: 1px solid var(--border);
+      display: flex; gap: 8px;
+    }
+    #chat-modal-body {
+      flex: 1; overflow-y: auto; padding: 14px 18px;
+      font-size: 13px; line-height: 1.6; white-space: pre-wrap;
+      font-family: 'Courier New', monospace; color: var(--text2);
+    }
+
+    /* Progress da coleta */
+    .conv-progress { margin-bottom: 10px; }
+    .progress-bar-bg { background: var(--bg); border-radius: 4px; height: 4px; margin-top: 4px; }
+    .progress-bar { background: var(--green); height: 4px; border-radius: 4px; transition: width .4s; }
+    .progress-label { font-size: 11px; color: var(--text2); }
+
+    /* Sem conversas */
+    .empty-state {
+      text-align: center;
+      padding: 48px 24px;
+      color: var(--text2);
+    }
+    .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+    .empty-state p { font-size: 14px; }
+
+    /* ── LOG ── */
+    .log-area {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .log-header {
+      padding: 8px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      user-select: none;
+    }
+    .log-header:hover { background: var(--surface2); }
+    .log-title { font-size: 13px; font-weight: 600; color: var(--text2); }
+    .log-toggle { color: var(--text2); font-size: 12px; }
+    #log-content {
+      height: 160px;
+      overflow-y: auto;
+      padding: 0 16px 8px;
+    }
+    #log-content.collapsed { display: none; }
+
+    .log-entry {
+      display: flex;
+      gap: 10px;
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(51,65,85,.4);
+      font-size: 12px;
+      align-items: flex-start;
+    }
+    .log-time { color: var(--text2); white-space: nowrap; flex-shrink: 0; }
+    .log-dir { flex-shrink: 0; }
+    .log-dir.in  { color: var(--blue); }
+    .log-dir.out { color: var(--green); }
+    .log-dir.atendente { color: var(--yellow); }
+    .log-from { color: var(--text2); flex-shrink: 0; font-size: 11px; padding-top: 1px; }
+    .log-from.atendente { color: var(--yellow); font-weight: 600; }
+    .log-text { color: var(--text); flex: 1; word-break: break-word; }
+    .log-contact { color: var(--purple); font-weight: 600; flex-shrink: 0; font-size: 11px; }
+
+    /* ── ALERTA ── */
+    #alert-bar {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      max-width: 380px;
+      padding: 14px 18px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      display: none;
+      z-index: 999;
+      box-shadow: 0 8px 24px rgba(0,0,0,.4);
+      animation: slideIn .3s ease;
+    }
+    @keyframes slideIn { from{transform:translateX(100px);opacity:0} to{transform:translateX(0);opacity:1} }
+    #alert-bar.warning { background: var(--yellow); color: #000; }
+    #alert-bar.danger  { background: var(--red); color: #fff; }
+
+    /* ── SCROLLBAR ── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+  </style>
+</head>
+<body>
+
+<!-- ALERTA FLUTUANTE -->
+<div id="alert-bar"></div>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">🎬 Películas Brasil <span>Painel de Atendimento</span></div>
+  <div class="status-badge">
+    <div class="dot red" id="status-dot"></div>
+    <span id="status-text">Desconectado</span>
+  </div>
+</header>
+
+<!-- MAIN -->
+<div class="main">
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+
+    <!-- QR Code -->
+    <div class="card">
+      <div class="card-title">📱 Conexão WhatsApp</div>
+      <div id="qr-area">
+        <div id="qr-placeholder">
+          <div class="icon">📲</div>
+          <div>Aguardando QR Code...</div>
+          <div style="font-size:11px;margin-top:4px;">Inicie o servidor para conectar</div>
+        </div>
+        <img id="qr-img" alt="QR Code WhatsApp" />
+        <div id="connected-info">
+          <div style="font-size:32px;margin-bottom:4px;">✅</div>
+          <div class="phone" id="connected-phone">—</div>
+          <div class="label">WhatsApp Conectado</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Controle Global -->
+    <div class="card">
+      <div class="card-title">🤖 Controle do Bot</div>
+      <button id="btn-toggle-bot" class="active">
+        <span>⏸</span> <span id="btn-bot-text">PAUSAR BOT</span>
+      </button>
+      <div style="margin-top:12px;">
+        <div class="stat-row">
+          <span>Horário de atendimento</span>
+          <span class="stat-val" id="hours-display">07:00–21:00</span>
+        </div>
+        <div class="stat-row">
+          <span>Status horário</span>
+          <span class="stat-val" id="hours-status">—</span>
+        </div>
+        <div class="stat-row">
+          <span>Mensagens (24h)</span>
+          <span class="stat-val" id="msg-count">0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Base de Conhecimento -->
+    <div class="card">
+      <div class="card-title">📚 Base de Conhecimento</div>
+      <div style="margin-bottom:10px;">
+        <div class="stat-row">
+          <span>Exemplos de sucesso salvos</span>
+          <span class="stat-val" id="exemplos-count">0</span>
+        </div>
+        <div class="stat-row">
+          <span>Status do aprendizado</span>
+          <span class="stat-val" id="exemplos-status" style="color:var(--text2);font-size:11px;">Aguardando conversas convertidas</span>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text2);line-height:1.5;margin-bottom:10px;">
+        Cada conversa marcada como <strong style="color:var(--green)">✅ Virou cliente</strong> é salva automaticamente como exemplo. O bot aprende com o seu estilo de atendimento.
+      </div>
+      <button onclick="verExemplos()" style="width:100%;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;font-size:12px;">
+        🔍 Ver exemplos salvos
+      </button>
+    </div>
+
+    <!-- Configurações -->
+    <div class="card">
+      <div class="card-title">⚙️ Configurações</div>
+      <div class="settings-grid">
+        <div class="settings-row">
+          <div>
+            <label>Início</label>
+            <input type="time" id="cfg-inicio" value="07:00" />
+          </div>
+          <div>
+            <label>Fim</label>
+            <input type="time" id="cfg-fim" value="21:00" />
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <label>Delay mín (ms)</label>
+            <input type="number" id="cfg-delay-min" value="2000" min="500" max="10000" step="500" />
+          </div>
+          <div>
+            <label>Delay máx (ms)</label>
+            <input type="number" id="cfg-delay-max" value="5000" min="500" max="15000" step="500" />
+          </div>
+        </div>
+        <button id="btn-save-settings">💾 Salvar</button>
+      </div>
+    </div>
+
+  </div>
+  <!-- /SIDEBAR -->
+
+  <!-- CONTEÚDO PRINCIPAL -->
+  <div class="content">
+
+    <!-- Lista de conversas -->
+    <div class="conversations-area">
+      <div class="section-header">
+        <div class="section-title">Conversas em Tempo Real</div>
+        <div class="section-count" id="conv-count">0</div>
+      </div>
+      <div id="conversations-list">
+        <div class="empty-state">
+          <div class="icon">💬</div>
+          <p>Nenhuma conversa ainda.</p>
+          <p style="margin-top:4px;">Conecte o WhatsApp e aguarde os clientes.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Log em tempo real -->
+    <div class="log-area">
+      <div class="log-header" onclick="toggleLog()">
+        <span class="log-title">📋 Log de Mensagens em Tempo Real</span>
+        <span class="log-toggle" id="log-toggle-icon">▲ Recolher</span>
+      </div>
+      <div id="log-content">
+        <div id="log-entries"></div>
+      </div>
+    </div>
+
+  </div>
+  <!-- /CONTEÚDO -->
+
+</div>
+<!-- /MAIN -->
+
+<!-- MODAL DE CHAT COMPLETO -->
+<div id="chat-modal">
+  <div id="chat-modal-box">
+    <div id="chat-modal-header">
+      <span id="chat-modal-title">Chat completo</span>
+      <button id="chat-modal-close" onclick="closeChatModal()">✕</button>
+    </div>
+    <div id="chat-modal-actions">
+      <button class="btn-action copy" onclick="doCopyChat()" style="font-size:12px;padding:5px 12px;">📋 Copiar tudo</button>
+    </div>
+    <div id="chat-modal-body"></div>
+  </div>
+</div>
+
+<script>
+// ── SOCKET.IO ──────────────────────────────────────────────────────────────────
+const socket = io();
+let globalBotActive = true;
+let logCollapsed = false;
+let conversations = {};
+
+// Carregar contagem de exemplos de sucesso ao iniciar
+fetch('/api/exemplos').then(r => r.json()).then(data => {
+  const el = document.getElementById('exemplos-count');
+  const st = document.getElementById('exemplos-status');
+  if (el) el.textContent = data.total;
+  if (st) st.textContent = data.total === 0
+    ? 'Aguardando conversas convertidas'
+    : `${data.total} exemplo(s) ativos — bot aprendendo ✅`;
+}).catch(() => {});
+
+// Atualizar quando um novo exemplo for salvo
+socket.on('exemplos_updated', ({ total }) => {
+  const el = document.getElementById('exemplos-count');
+  const st = document.getElementById('exemplos-status');
+  if (el) el.textContent = total;
+  if (st) st.textContent = total === 0
+    ? 'Aguardando conversas convertidas'
+    : `${total} exemplo(s) ativos — bot aprendendo ✅`;
+  if (st) st.style.color = total > 0 ? 'var(--green)' : 'var(--text2)';
+});
+
+// Estado inicial
+socket.on('initial_state', (data) => {
+  globalBotActive = data.globalBotActive;
+  updateBotButton();
+  updateStatusBadge(data.connected, data.connectedNumber);
+  updateMessageCount(data.messageCount24h);
+  if (data.settings) applySettings(data.settings);
+  if (data.conversations) {
+    data.conversations.forEach(c => { conversations[c.id] = c; });
+    renderConversations();
+  }
+  if (data.messageLog) {
+    data.messageLog.slice().reverse().forEach(addLogEntry);
+  }
+});
+
+// QR Code
+socket.on('qr', (qrDataUrl) => {
+  document.getElementById('qr-img').src = qrDataUrl;
+  document.getElementById('qr-img').style.display = 'block';
+  document.getElementById('qr-placeholder').style.display = 'none';
+  document.getElementById('connected-info').style.display = 'none';
+});
+
+// Status de conexão
+socket.on('connection_status', ({ status, number }) => {
+  updateStatusBadge(status === 'connected', number);
+  if (status === 'connected') {
+    document.getElementById('qr-img').style.display = 'none';
+    document.getElementById('qr-placeholder').style.display = 'none';
+    document.getElementById('connected-info').style.display = 'block';
+    document.getElementById('connected-phone').textContent = number || '';
+  } else if (status === 'waiting_qr') {
+    // QR já apareceu via evento 'qr'
+  } else {
+    document.getElementById('qr-img').style.display = 'none';
+    document.getElementById('qr-placeholder').style.display = 'flex';
+    document.getElementById('connected-info').style.display = 'none';
+    document.getElementById('qr-placeholder').innerHTML = '<div class="icon">🔄</div><div>Reconectando...</div>';
+  }
+});
+
+// Status do bot
+socket.on('bot_status_update', ({ active }) => {
+  globalBotActive = active;
+  updateBotButton();
+});
+
+// Conversa atualizada
+socket.on('conversation_updated', (conv) => {
+  conversations[conv.id] = conv;
+  renderConversations();
+});
+
+// Novo log
+socket.on('new_log_entry', (entry) => {
+  addLogEntry(entry);
+});
+
+// Contador de mensagens
+socket.on('message_count_update', (count) => {
+  updateMessageCount(count);
+});
+
+// Configurações atualizadas
+socket.on('settings_updated', (settings) => {
+  applySettings(settings);
+});
+
+// Alerta
+socket.on('alert', ({ type, message }) => {
+  showAlert(message, type);
+});
+
+// ── FUNÇÕES DE UI ──────────────────────────────────────────────────────────────
+
+function updateStatusBadge(connected, number) {
+  const dot = document.getElementById('status-dot');
+  const text = document.getElementById('status-text');
+  if (connected) {
+    dot.className = 'dot green';
+    text.textContent = `🟢 Conectado${number ? ': ' + number : ''}`;
+  } else {
+    dot.className = 'dot red';
+    text.textContent = '🔴 Desconectado';
+  }
+}
+
+function updateBotButton() {
+  const btn = document.getElementById('btn-toggle-bot');
+  const txt = document.getElementById('btn-bot-text');
+  if (globalBotActive) {
+    btn.className = 'active';
+    btn.querySelector('span').textContent = '⏸';
+    txt.textContent = 'PAUSAR BOT';
+  } else {
+    btn.className = 'paused';
+    btn.querySelector('span').textContent = '▶';
+    txt.textContent = 'ATIVAR BOT';
+  }
+}
+
+function updateMessageCount(count) {
+  const el = document.getElementById('msg-count');
+  el.textContent = count;
+  el.className = 'stat-val' + (count >= 200 ? ' danger' : count >= 150 ? ' warn' : '');
+}
+
+function applySettings(s) {
+  if (s.horario_inicio) document.getElementById('cfg-inicio').value = s.horario_inicio;
+  if (s.horario_fim) document.getElementById('cfg-fim').value = s.horario_fim;
+  if (s.delay_min) document.getElementById('cfg-delay-min').value = s.delay_min;
+  if (s.delay_max) document.getElementById('cfg-delay-max').value = s.delay_max;
+  document.getElementById('hours-display').textContent =
+    `${s.horario_inicio || '07:00'}–${s.horario_fim || '21:00'}`;
+  updateHoursStatus(s);
+}
+
+function updateHoursStatus(s) {
+  const now = new Date();
+  const [sh, sm] = (s.horario_inicio || '07:00').split(':').map(Number);
+  const [eh, em] = (s.horario_fim || '21:00').split(':').map(Number);
+  const cur = now.getHours() * 60 + now.getMinutes();
+  const start = sh * 60 + sm;
+  const end = eh * 60 + em;
+  const el = document.getElementById('hours-status');
+  if (cur >= start && cur < end) {
+    el.textContent = '✅ Ativo';
+    el.className = 'stat-val';
+  } else {
+    el.textContent = '🌙 Fora do horário';
+    el.className = 'stat-val warn';
+  }
+}
+setInterval(() => {
+  const inicio = document.getElementById('cfg-inicio').value;
+  const fim = document.getElementById('cfg-fim').value;
+  if (inicio && fim) updateHoursStatus({ horario_inicio: inicio, horario_fim: fim });
+}, 30000);
+
+// ── RENDERIZAR CONVERSAS ───────────────────────────────────────────────────────
+function timeAgo(ts) {
+  if (!ts) return '';
+  const diff = (Date.now() - new Date(ts).getTime()) / 1000;
+  if (diff < 60) return `${Math.floor(diff)}s atrás`;
+  if (diff < 3600) return `${Math.floor(diff/60)} min atrás`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}h atrás`;
+  return `${Math.floor(diff/86400)}d atrás`;
+}
+
+function calcProgress(conv) {
+  // Se o resumo já foi enviado = fluxo 100% completo pelo bot
+  if (conv.resumo_enviado) return 100;
+
+  const info = conv.informacoes_coletadas || {};
+  let total = 9, done = 0;
+  if (info.nome) done++;
+  if (info.bairro) done++;
+  if (info.quantidade_janelas) done++;
+  if (info.janelas && info.janelas.length > 0) done++;
+  if (info.fixacao) done++;
+  if (info.modelo_vidro) done++;
+  if (info.tipo_vidro) done++;
+  // fotos: true (recebidas) ou 'pendente' (cliente disse que vai mandar depois)
+  if (info.fotos_recebidas) done++;
+  if (info.pelicula_desejada) done++;
+  return Math.round((done / total) * 100);
+}
+
+function renderConversations() {
+  const list = document.getElementById('conversations-list');
+  const convArray = Object.values(conversations).sort((a, b) =>
+    (b.lastActivity || 0) - (a.lastActivity || 0)
+  );
+
+  document.getElementById('conv-count').textContent = convArray.length;
+
+  if (convArray.length === 0) {
+    list.innerHTML = `<div class="empty-state">
+      <div class="icon">💬</div>
+      <p>Nenhuma conversa ainda.</p>
+      <p style="margin-top:4px;">Conecte o WhatsApp e aguarde os clientes.</p>
+    </div>`;
+    return;
+  }
+
+  list.innerHTML = convArray.map(conv => {
+    const isActive = conv.lastActivity && (Date.now() - conv.lastActivity) < 1800000;
+    const lastMsg = conv.mensagens?.slice(-1)[0];
+    const preview = lastMsg ? (lastMsg.conteudo || '').slice(0, 55) : 'Nenhuma mensagem ainda';
+    const progress = calcProgress(conv);
+    const name    = conv.cliente || formatNumber(conv.numero || conv.id);
+    const numFmt  = formatNumber(conv.numero || conv.id);
+    const waLink  = getWaLink(conv.numero || conv.id);
+    // Número clicável (abre WhatsApp) ou só texto se for LID sem número real
+    const numHtml = waLink
+      ? `<a href="${waLink}" target="_blank" title="Abrir conversa no WhatsApp" style="color:var(--green);font-size:11px;text-decoration:none;display:inline-flex;align-items:center;gap:3px;">📱 ${esc(numFmt)}</a>`
+      : `<span style="color:var(--text2);font-size:11px;">${esc(numFmt)}</span>`;
+    const timeStr = conv.lastActivity ? timeAgo(new Date(conv.lastActivity).toISOString()) : '—';
+    const statusBadge = conv.status === 'humano'
+      ? '<span class="badge human">👤 Humano</span>'
+      : conv.status === 'encerrada'
+      ? '<span class="badge closed">✖ Encerrada</span>'
+      : '<span class="badge bot">🤖 Bot</span>';
+
+    let actions = '';
+    // Botões persistentes em todos os status
+    const restartBtn = `<button class="btn-action restart" onclick="restartConv('${conv.id}')" title="Apaga histórico e reinicia do zero">🔄 Reiniciar</button>`;
+    const copyBtn   = `<button class="btn-action copy"    onclick="openChatModal('${conv.id}')" title="Ver e copiar conversa completa">📋 Ver chat</button>`;
+
+    if (conv.status === 'bot_ativo') {
+      actions = `
+        <button class="btn-action assume" onclick="assumeConv('${conv.id}')">👤 Assumir</button>
+        <button class="btn-action close"  onclick="closeConv('${conv.id}')">✖ Encerrar</button>
+        ${copyBtn} ${restartBtn}`;
+    } else if (conv.status === 'humano') {
+      actions = `
+        <button class="btn-action return" onclick="returnToBot('${conv.id}')">🤖 Devolver ao bot</button>
+        <button class="btn-action close"  onclick="closeConv('${conv.id}')">✖ Encerrar</button>
+        ${copyBtn} ${restartBtn}`;
+    } else if (conv.status === 'encerrada' && conv.converteu === null) {
+      actions = `
+        <button class="btn-action success" onclick="setResult('${conv.id}', true)">✅ Virou cliente</button>
+        <button class="btn-action fail"    onclick="setResult('${conv.id}', false)">❌ Não fechou</button>
+        ${copyBtn} ${restartBtn}`;
+    } else if (conv.status === 'encerrada') {
+      const resultText = conv.converteu ? '✅ Virou cliente' : '❌ Não fechou';
+      actions = `<span style="font-size:13px;color:var(--text2);">${resultText}</span> ${copyBtn} ${restartBtn}`;
+    }
+
+    return `<div class="conv-card ${conv.status === 'humano' ? 'humano' : ''} ${conv.status === 'encerrada' ? 'encerrada' : ''}" id="conv-${conv.id.replace(/[^a-z0-9]/gi,'-')}">
+      <div class="conv-top">
+        <div>
+          <div class="conv-name">${esc(name)}</div>
+          <div style="margin-top:2px;">${numHtml}</div>
+        </div>
+        <div class="conv-time">${timeStr}</div>
+      </div>
+      <div class="conv-preview">${esc(preview)}</div>
+      <div class="conv-meta">
+        ${statusBadge}
+        <div class="activity-dot ${isActive ? 'active' : 'inactive'}" title="${isActive ? 'Ativa' : 'Inativa'}"></div>
+        ${conv.bairro ? `<span style="font-size:11px;color:var(--text2);">📍 ${esc(conv.bairro)}</span>` : ''}
+      </div>
+      ${conv.status !== 'encerrada' ? `
+      <div class="conv-progress">
+        <div class="progress-label">Coleta: ${progress}%</div>
+        <div class="progress-bar-bg"><div class="progress-bar" style="width:${progress}%"></div></div>
+      </div>` : ''}
+      <div class="conv-actions">${actions}</div>
+    </div>`;
+  }).join('');
+}
+
+// Extrai o número puro de um JID (remove @s.whatsapp.net, @lid, @g.us, etc.)
+function extractNumber(jid) {
+  if (!jid) return '';
+  return jid.replace(/@[^@]+$/, '').trim();
+}
+
+// Formata número para exibição: 5583996476052 → +55 (83) 99647-6052
+function formatNumber(jid) {
+  if (!jid) return 'Desconhecido';
+  const n = extractNumber(jid);
+  // Se não é puramente numérico (ex: LID antigo com letras), mostra limpo
+  if (!/^\d+$/.test(n)) return n || 'Desconhecido';
+  // Formatar como número BR: 55 + DDD + número
+  if (n.length >= 12) {
+    const cc  = n.slice(0, 2);           // código do país: 55
+    const ddd = n.slice(2, 4);           // DDD: 83
+    const num = n.slice(4);              // restante
+    // 9 dígitos → celular, 8 → fixo
+    if (num.length === 9) return `+${cc} (${ddd}) ${num.slice(0,5)}-${num.slice(5)}`;
+    if (num.length === 8) return `+${cc} (${ddd}) ${num.slice(0,4)}-${num.slice(4)}`;
+  }
+  return `+${n}`;
+}
+
+// Gera link wa.me para abrir conversa direto no WhatsApp
+function getWaLink(jid) {
+  if (!jid) return null;
+  const n = extractNumber(jid);
+  if (!/^\d{10,15}$/.test(n)) return null; // só funciona com números válidos
+  return `https://wa.me/${n}`;
+}
+
+function esc(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── AÇÕES ──────────────────────────────────────────────────────────────────────
+async function assumeConv(id) {
+  await fetch(`/api/conversation/${encodeURIComponent(id)}/assume`, { method: 'POST' });
+}
+async function returnToBot(id) {
+  await fetch(`/api/conversation/${encodeURIComponent(id)}/return-to-bot`, { method: 'POST' });
+}
+async function closeConv(id) {
+  if (!confirm('Encerrar esta conversa?')) return;
+  await fetch(`/api/conversation/${encodeURIComponent(id)}/close`, { method: 'POST' });
+}
+// ── MODAL DE CHAT COMPLETO ─────────────────────────────────────────────────────
+let currentChatId = null;
+
+function formatChatText(conv) {
+  const nome = conv.cliente || formatNumber(conv.numero || conv.id);
+  const inicio = conv.data_inicio
+    ? new Date(conv.data_inicio).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+    : '—';
+  const msgs = conv.mensagens || [];
+
+  let lines = [];
+  lines.push(`╔══════════════════════════════════════╗`);
+  lines.push(`  CHAT: ${nome}`);
+  lines.push(`  Início: ${inicio}`);
+  if (conv.bairro) lines.push(`  Bairro: ${conv.bairro}`);
+  lines.push(`╚══════════════════════════════════════╝`);
+  lines.push('');
+
+  msgs.forEach(m => {
+    const hora = m.hora
+      ? new Date(m.hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+      : '';
+    const quem = m.de === 'cliente' ? `👤 Cliente`
+                : m.de === 'bot'    ? `🤖 Bot`
+                : m.de === 'humano' ? `🧑‍💼 Atendente (Alex)`
+                : `👤 Sistema`;
+    lines.push(`[${hora}] ${quem}`);
+    lines.push(`  ${m.conteudo || `[${m.tipo || 'mídia'}]`}`);
+    lines.push('');
+  });
+
+  if (msgs.length === 0) lines.push('(sem mensagens registradas)');
+
+  // Informações coletadas
+  const info = conv.informacoes_coletadas || {};
+  lines.push('──────────────────────────────────────');
+  lines.push('DADOS COLETADOS:');
+  if (info.nome)             lines.push(`  Nome: ${info.nome}`);
+  if (info.bairro)           lines.push(`  Bairro: ${info.bairro}`);
+  if (info.quantidade_janelas) lines.push(`  Qtd superfícies: ${info.quantidade_janelas}`);
+  (info.janelas || []).forEach(j => {
+    const tipo = j.tipo ? (j.tipo.charAt(0).toUpperCase() + j.tipo.slice(1)) : 'Janela';
+    lines.push(`  ${tipo} ${j.numero}: ${j.medida || '?'} — ${j.folhas || '?'} folha(s)`);
+  });
+  if (info.fixacao)         lines.push(`  Fixação: ${info.fixacao}`);
+  if (info.modelo_vidro)    lines.push(`  Modelo vidro: ${info.modelo_vidro}`);
+  if (info.tipo_vidro)      lines.push(`  Tipo vidro: ${info.tipo_vidro}`);
+  if (info.pelicula_desejada) lines.push(`  Película: ${info.pelicula_desejada}`);
+  lines.push(`  Fotos: ${info.fotos_recebidas === true ? 'Recebidas' : info.fotos_recebidas === 'pendente' ? 'Pendente' : 'Não'}`);
+  if (conv.resultado)       lines.push(`  Resultado: ${conv.converteu ? 'Virou cliente ✅' : 'Não fechou ❌'}`);
+
+  return lines.join('\n');
+}
+
+function openChatModal(id) {
+  currentChatId = id;
+  const conv = conversations[id];
+  if (!conv) return;
+  const nome = conv.cliente || formatNumber(conv.numero || id);
+  document.getElementById('chat-modal-title').textContent = `Chat — ${nome}`;
+  document.getElementById('chat-modal-body').textContent = formatChatText(conv);
+  document.getElementById('chat-modal').classList.add('open');
+}
+
+function closeChatModal() {
+  document.getElementById('chat-modal').classList.remove('open');
+  currentChatId = null;
+}
+
+async function doCopyChat() {
+  const text = document.getElementById('chat-modal-body').textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    showAlert('✅ Chat copiado para a área de transferência!', 'success');
+  } catch {
+    // Fallback para navegadores sem clipboard API
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showAlert('✅ Chat copiado!', 'success');
+  }
+}
+
+// Fechar modal clicando fora
+document.getElementById('chat-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeChatModal();
+});
+
+// Fechar com ESC
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeChatModal(); });
+
+async function verExemplos() {
+  try {
+    const res = await fetch('/api/exemplos');
+    const data = await res.json();
+    if (data.total === 0) {
+      alert('Nenhum exemplo salvo ainda.\n\nMarque conversas como "✅ Virou cliente" para começar a alimentar a base de conhecimento do bot.');
+      return;
+    }
+    let texto = `📚 BASE DE CONHECIMENTO — ${data.total} exemplo(s) salvo(s)\n\n`;
+    data.exemplos.forEach((ex, i) => {
+      const data_fmt = new Date(ex.data).toLocaleDateString('pt-BR');
+      texto += `${i + 1}. ${ex.cliente} (${ex.bairro}) — ${data_fmt}\n`;
+      texto += `   Mensagens: ${ex.mensagens.length} | `;
+      const info = ex.info_coletadas || {};
+      texto += `Película: ${info.pelicula_desejada || '-'} | Superfícies: ${info.quantidade_janelas || '-'}\n`;
+    });
+    texto += '\nPara remover um exemplo, acesse o arquivo exemplos_sucesso.json na pasta do projeto.';
+    alert(texto);
+  } catch(e) {
+    alert('Erro ao carregar exemplos.');
+  }
+}
+
+async function restartConv(id) {
+  const name = conversations[id]?.cliente || id;
+  if (!confirm(`Reiniciar a conversa com "${name}"?\n\nIsso apaga todo o histórico e estado. A próxima mensagem será tratada como primeiro contato.`)) return;
+  await fetch(`/api/conversation/${encodeURIComponent(id)}/restart`, { method: 'POST' });
+  showAlert(`🔄 Conversa reiniciada: ${name}`, 'warning');
+}
+async function setResult(id, converteu) {
+  await fetch(`/api/conversation/${encodeURIComponent(id)}/result`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ converteu })
+  });
+
+  if (converteu) {
+    // Atualizar contador de exemplos de sucesso
+    try {
+      const res = await fetch('/api/exemplos');
+      const data = await res.json();
+      const el = document.getElementById('exemplos-count');
+      if (el) el.textContent = data.total;
+      showAlert(`✅ Conversa marcada como convertida! Exemplo salvo para aprendizado do bot. (Total: ${data.total})`, 'success');
+    } catch(e) {
+      showAlert('✅ Conversa marcada como convertida!', 'success');
+    }
+  } else {
+    showAlert('❌ Conversa marcada como não fechada.', 'warning');
+  }
+}
+
+document.getElementById('btn-toggle-bot').addEventListener('click', async () => {
+  const res = await fetch('/api/bot/toggle', { method: 'POST' });
+  const data = await res.json();
+  globalBotActive = data.active;
+  updateBotButton();
+});
+
+document.getElementById('btn-save-settings').addEventListener('click', async () => {
+  const body = {
+    horario_inicio: document.getElementById('cfg-inicio').value,
+    horario_fim: document.getElementById('cfg-fim').value,
+    delay_min: document.getElementById('cfg-delay-min').value,
+    delay_max: document.getElementById('cfg-delay-max').value
+  };
+  const res = await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (res.ok) {
+    showAlert('✅ Configurações salvas!', 'success');
+  }
+});
+
+// ── LOG ────────────────────────────────────────────────────────────────────────
+function addLogEntry(entry) {
+  const container = document.getElementById('log-entries');
+  const isIncoming = entry.type === 'incoming';
+  const isAtendente = !isIncoming && entry.from === 'atendente';
+  const time = new Date(entry.timestamp).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  const contactName = entry.cliente || formatNumber(entry.jid);
+
+  // Determinar direção e rótulo
+  let dirClass, dirArrow, fromLabel, fromClass;
+  if (isIncoming) {
+    dirClass = 'in'; dirArrow = '←'; fromLabel = '[cliente]'; fromClass = '';
+  } else if (isAtendente) {
+    dirClass = 'atendente'; dirArrow = '→'; fromLabel = '[🧑‍💼 atendente]'; fromClass = 'atendente';
+  } else {
+    dirClass = 'out'; dirArrow = '→'; fromLabel = `[🤖 ${entry.from || 'bot'}]`; fromClass = '';
+  }
+
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  div.innerHTML = `
+    <span class="log-time">${time}</span>
+    <span class="log-dir ${dirClass}">${dirArrow}</span>
+    <span class="log-contact">${esc(contactName.slice(0, 15))}</span>
+    <span class="log-from ${fromClass}">${fromLabel}</span>
+    <span class="log-text">${esc((entry.text || '').slice(0, 120))}</span>
+  `;
+  container.insertBefore(div, container.firstChild);
+
+  // Limitar a 200 entradas
+  while (container.children.length > 200) container.lastChild.remove();
+}
+
+function toggleLog() {
+  logCollapsed = !logCollapsed;
+  document.getElementById('log-content').className = logCollapsed ? 'collapsed' : '';
+  document.getElementById('log-toggle-icon').textContent = logCollapsed ? '▼ Expandir' : '▲ Recolher';
+}
+
+// ── ALERTA ────────────────────────────────────────────────────────────────────
+let alertTimeout;
+function showAlert(msg, type = 'warning') {
+  const bar = document.getElementById('alert-bar');
+  bar.textContent = msg;
+  bar.className = type === 'danger' ? 'danger' : type === 'success' ? 'warning' : 'warning';
+  if (type === 'success') { bar.style.background = 'var(--green)'; bar.style.color = '#000'; }
+  else if (type === 'danger') { bar.style.background = 'var(--red)'; bar.style.color = '#fff'; }
+  else { bar.style.background = 'var(--yellow)'; bar.style.color = '#000'; }
+  bar.style.display = 'block';
+  clearTimeout(alertTimeout);
+  alertTimeout = setTimeout(() => { bar.style.display = 'none'; }, 5000);
+}
+
+// ── REFRESH PERIÓDICO DOS TIMESTAMPS ──────────────────────────────────────────
+setInterval(() => {
+  if (Object.keys(conversations).length > 0) renderConversations();
+}, 30000);
+</script>
+</body>
+</html>

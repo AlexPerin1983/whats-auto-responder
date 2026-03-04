@@ -1,0 +1,117 @@
+==============================================================
+  CHATBOT PELICULAS BRASIL - GUIA DE USO
+  Versão 1.0
+==============================================================
+
+PASSO 1 — CONFIGURAR A CHAVE DA GROQ
+──────────────────────────────────────
+1. Abra o arquivo ".env" com o Bloco de Notas
+   (clique com botão direito → Abrir com → Bloco de Notas)
+
+2. Substitua "sua_chave_aqui" pela sua chave da Groq:
+   GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+3. Coloque seu número do WhatsApp (com código do país e DDD,
+   sem espaços ou traços):
+   OWNER_NUMBER=5583999887766
+   (55 = Brasil, 83 = DDD João Pessoa)
+
+4. Salve o arquivo (Ctrl+S) e feche o Bloco de Notas.
+
+
+COMO OBTER A CHAVE GROQ GRATUITA:
+──────────────────────────────────
+1. Acesse: https://console.groq.com
+2. Clique em "Sign Up" e crie sua conta gratuita
+3. Acesse o menu "API Keys" no painel
+4. Clique em "Create API Key"
+5. Dê um nome (ex: "chatbot-insulfilm")
+6. Copie a chave gerada (começa com "gsk_...")
+7. Cole no arquivo .env conforme instruído acima
+
+
+PASSO 2 — COLOCAR O VÍDEO DE APRESENTAÇÃO
+───────────────────────────────────────────
+1. Grave ou organize seu vídeo de apresentação
+   (mostrando amostras de películas, explicando o processo)
+2. Renomeie o arquivo para: apresentacao.mp4
+3. Coloque o arquivo nesta mesma pasta do projeto
+
+   O bot enviará automaticamente esse vídeo para cada cliente
+   logo após receber o nome e bairro deles.
+
+   Se não tiver o vídeo ainda, o bot funciona normalmente
+   sem enviar o vídeo — pode adicionar depois.
+
+
+PASSO 3 — INICIAR O SISTEMA
+─────────────────────────────
+1. Dê duplo clique no arquivo "iniciar.bat"
+2. Uma janela preta vai abrir — NÃO feche ela
+3. Aguarde 4 segundos, o painel vai abrir no navegador
+4. Na primeira vez, as dependências serão instaladas
+   automaticamente (pode demorar 2-3 minutos)
+
+
+PASSO 4 — CONECTAR O WHATSAPP
+───────────────────────────────
+1. No painel, aparecerá um QR Code
+2. Abra o WhatsApp no seu celular
+3. Toque nos três pontos (⋮) → Aparelhos conectados
+   (ou Dispositivos vinculados)
+4. Toque em "Conectar um aparelho"
+5. Aponte a câmera para o QR Code na tela
+6. O painel mostrará "✅ Conectado" quando funcionar
+
+   DICA: Use um chip dedicado ao negócio, não seu pessoal.
+   WhatsApp Business funciona melhor com automações.
+
+
+PASSO 5 — USAR O PAINEL
+─────────────────────────
+O painel em http://localhost:3000 mostra:
+
+• STATUS — verde quando conectado, vermelho quando não
+• PAUSAR/ATIVAR BOT — pausa todas as conversas de uma vez
+• LISTA DE CONVERSAS — cada cliente que entrar em contato
+  aparece aqui com o nome e última mensagem
+
+Para cada conversa você pode:
+  [👤 Assumir]       → Você responde, bot fica quieto
+  [🤖 Devolver ao bot] → Bot retoma o atendimento
+  [✖ Encerrar]       → Finaliza a conversa
+  Após encerrar:
+  [✅ Virou cliente]  → Marca como conversão
+  [❌ Não fechou]     → Marca como não convertido
+
+LOG — Na parte de baixo aparece em tempo real todas as
+mensagens chegando e saindo.
+
+
+PASSO 6 — MANUTENÇÃO
+──────────────────────
+• Para PARAR o bot: feche a janela preta
+• Para REINICIAR: dê duplo clique em iniciar.bat novamente
+• Os dados das conversas ficam salvos na pasta "conversas/"
+• As fotos dos clientes ficam em "fotos_clientes/"
+• Se precisar desconectar o WhatsApp: apague a pasta
+  "auth_info_baileys/" e reconecte com novo QR Code
+
+
+DICAS PARA EVITAR BLOQUEIO
+────────────────────────────
+• O bot já vem configurado com delays de 2-5 segundos
+  entre mensagens para parecer humano
+• Só responde entre 7h e 21h por padrão
+• Nunca envia mensagem para quem não te contactou primeiro
+• Use WhatsApp Business no chip do negócio
+• Se aparecer o alerta de "150+ mensagens", monitore
+• Mantenha o bot pausado quando não precisar dele
+
+
+SUPORTE
+────────
+Para dúvidas técnicas, consulte:
+• Documentação Baileys: https://github.com/WhiskeySockets/Baileys
+• Documentação Groq: https://console.groq.com/docs
+==============================================================

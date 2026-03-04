@@ -1,0 +1,19 @@
+==================================================
+  INSTRUÇÃO - VÍDEO DE APRESENTAÇÃO
+==================================================
+
+Coloque seu vídeo de apresentação nesta pasta
+com o nome exato: apresentacao.mp4
+
+O bot enviará automaticamente esse vídeo para
+cada cliente após receber o nome e o bairro.
+
+Dicas para o vídeo:
+- Duração sugerida: 1 a 3 minutos
+- Mostre amostras de películas instaladas
+- Explique como descrever as janelas
+- Seja simpático e profissional
+
+Se o arquivo não existir, o bot pula essa etapa
+e continua o atendimento normalmente.
+==================================================
