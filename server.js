@@ -106,9 +106,10 @@ app.post('/api/conversation/:id/restart', (req, res) => {
     lastActivity: Date.now(),
     mensagens: [],
     informacoes_coletadas: {
-      nome: null, bairro: null, quantidade_janelas: null,
-      janelas: [], fixacao: null, modelo_vidro: null,
-      tipo_vidro: null, pelicula_desejada: null, fotos_recebidas: false
+      nome: null, bairro: null, tipo_imovel: null,
+      problema_principal: null, pelicula_indicada: null,
+      quantidade_janelas: null, janelas: [],
+      pelicula_desejada: null, fotos_recebidas: false
     },
     _boas_vindas_enviado: false,
     video_enviado: false,
@@ -186,9 +187,9 @@ app.post('/api/settings', (req, res) => {
     const envPath = path.join(__dirname, '.env');
     let envContent = fs.readFileSync(envPath, 'utf8');
     if (horario_inicio) envContent = envContent.replace(/HORARIO_INICIO=.*/m, `HORARIO_INICIO=${horario_inicio}`);
-    if (horario_fim)    envContent = envContent.replace(/HORARIO_FIM=.*/m, `HORARIO_FIM=${horario_fim}`);
-    if (delay_min)      envContent = envContent.replace(/DELAY_MIN=.*/m, `DELAY_MIN=${delay_min}`);
-    if (delay_max)      envContent = envContent.replace(/DELAY_MAX=.*/m, `DELAY_MAX=${delay_max}`);
+    if (horario_fim) envContent = envContent.replace(/HORARIO_FIM=.*/m, `HORARIO_FIM=${horario_fim}`);
+    if (delay_min) envContent = envContent.replace(/DELAY_MIN=.*/m, `DELAY_MIN=${delay_min}`);
+    if (delay_max) envContent = envContent.replace(/DELAY_MAX=.*/m, `DELAY_MAX=${delay_max}`);
     fs.writeFileSync(envPath, envContent);
   } catch (e) {
     console.warn('Aviso: não foi possível salvar as configurações no .env:', e.message);
@@ -226,11 +227,11 @@ function updateConversation(id, updates) {
       informacoes_coletadas: {
         nome: null,
         bairro: null,
+        tipo_imovel: null,
+        problema_principal: null,
+        pelicula_indicada: null,
         quantidade_janelas: null,
         janelas: [],
-        fixacao: null,
-        modelo_vidro: null,
-        tipo_vidro: null,
         pelicula_desejada: null,
         fotos_recebidas: false
       },
