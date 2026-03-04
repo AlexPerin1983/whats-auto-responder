@@ -407,13 +407,15 @@ function _extractLocally(texto, existingInfo = {}, ultimoStep = '') {
   // Respostas negativas simples — aceitas SOMENTE quando o bot já havia perguntado as medidas
   const naoSeiSimples = /^(eu\s+)?n[aã]o\s+(sei|tenho)\.?$|^n[aã]o\.?$|^não\.?$|^nao\.?$|^n[aã]o\s+sei\s+a\s+medida\.?$/i.test(texto.trim());
   // Respostas negativas explícitas (com a palavra "medida") — válidas em qualquer contexto
-  const naoTemMedidaExplicita =
-    /n[aã]o\s+(?:sei|tenho|lembro|possuo|consigo)[^.!?]*medidas?/i.test(texto) ||
+  // GUARD: se o cliente disser "vou tirar as medidas", ele TEM as medidas — não marcar como sem medidas
+  const temIntencaoMedir = /vou\s+(?:tirar|pegar|medir|buscar)\s+(?:as?\s+)?medidas?|vou\s+medir/i.test(texto);
+  const naoTemMedidaExplicita = !temIntencaoMedir && (
+    /n[aã]o\s+(?:sei|tenho|lembro|possuo|consigo)\s+(?:as?\s+)?medidas?/i.test(texto) ||
     /sem\s+medidas?/i.test(textoLower) ||
-    /medidas?[^.!?]*n[aã]o\s+(?:sei|tenho)/i.test(textoLower) ||
+    /medidas?\s+n[aã]o\s+(?:sei|tenho)/i.test(textoLower) ||
     /n[aã]o\s+tenho\s+as[.\s]+medidas?/i.test(texto) ||
-    /n[aã]o\s+tenho\s+(?:a|essa|essa)\s+medida/i.test(texto) ||
-    /j[aá]\s+disse\s+que\s+n[aã]o\s+(?:sei|tenho)/i.test(textoLower);
+    /j[aá]\s+disse\s+que\s+n[aã]o\s+(?:sei|tenho)\s+(?:as?\s+)?medidas?/i.test(textoLower)
+  );
   const naoTemMedida = naoTemMedidaExplicita || (pedindoMedidasCtx && naoSeiSimples);
 
   if (naoTemMedida && info.quantidade_janelas && info.janelas.length < info.quantidade_janelas) {
@@ -506,8 +508,21 @@ function _extractLocally(texto, existingInfo = {}, ultimoStep = '') {
     }
   }
 
-  // ── Fotos ──────────────────────────────────────────────────────────────
-  // (será marcado em handleImage/Video)
+  // ── Fotos ──────────────────────────────────────────────────────────────────
+  // (recebida: marcado em handleImage/Video)
+  // Cliente disse que NAO tem foto ou nao vai tirar: marcar como 'sem_foto' para parar de perguntar
+  if (!info.fotos_recebidas) {
+    const naoTemFoto =
+      /n[aã]o\s+(?:tenho|vou\s+(?:tirar|mandar|enviar))\s+(?:a\s+)?foto/i.test(texto) ||
+      /sem\s+foto/i.test(textoLower) ||
+      /foto\s+n[aã]o\s+(?:tenho|vou)|n[aã]o\s+(?:tenho|terei)\s+foto/i.test(textoLower) ||
+      /j[aá]\s+disse\s+que\s+n[aã]o\s+(?:tenho|vou).{0,15}foto/i.test(textoLower);
+    if (naoTemFoto) {
+      info.fotos_recebidas = 'sem_foto';
+      extraiu = true;
+      console.log('🔍 Fotos: cliente disse que não tem foto → fotos_recebidas = "sem_foto"');
+    }
+  }
 
   return { info, extraiu };
 }
@@ -672,6 +687,7 @@ function _getNextStep(jid) {
   }
 
   if (!info.fotos_recebidas) return { step: 'fotos', text: pickTemplate('pedir_fotos', { nome }) };
+  // 'sem_foto' é truthy e indica que o cliente já disse que não tem foto — não voltar a perguntar
 
   // All done
   return { step: 'completo', text: null };
@@ -707,7 +723,7 @@ ${problemaEmoji[info.problema_principal] || '🎯'} Problema: ${problemaLabel[in
 
 ${janelasText || '📐 Medidas: N/I'}
 
-📸 Fotos: ${info.fotos_recebidas === true ? 'Sim ✅' : info.fotos_recebidas === 'pendente' ? 'Pendente ⏳' : 'Não ❌'}
+📸 Fotos: ${info.fotos_recebidas === true ? 'Sim \u2705' : info.fotos_recebidas === 'sem_foto' ? 'N\u00e3o (cliente informou) \u274c' : info.fotos_recebidas === 'pendente' ? 'Pendente \u23f3' : 'N\u00e3o \u274c'}
 ⏱ Início: ${dataInicio} `;
 }
 
