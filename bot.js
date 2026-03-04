@@ -28,6 +28,9 @@ const {
 // ─── GROQ CLIENT ──────────────────────────────────────────────────────────────
 let groq;
 
+// Map para agrupar mensagens picadas digitadas rápidadmente
+const typingQueues = {};
+
 // ─── LOGGER SILENCIOSO (evita poluir o terminal) ──────────────────────────────
 const logger = pino({ level: 'silent' });
 
@@ -1456,16 +1459,39 @@ async function handleMessage(msg) {
 
   const msgId = msg.key.id;
   const rawText = getMessageText(msg);
+  // Filtro de duplicatas (anti-bug do Baileys)
   if (!msgId || isDuplicate(msgId, jid, rawText)) return;
 
-  await withJidLock(jid, () => _processMessage(msg));
+  // ── INÍCIO DA LÓGICA DE DEBOUNCE / TYPING ─────────────────────────────────
+  // A ideia é esperar o cliente terminar de mandar as mensagens picadas antes de processar
+  if (!typingQueues[jid]) {
+    typingQueues[jid] = { messages: [], timer: null };
+  }
+
+  // Guardar msg da fila
+  typingQueues[jid].messages.push(msg);
+
+  // Limpar timer anterior
+  if (typingQueues[jid].timer) {
+    clearTimeout(typingQueues[jid].timer);
+  }
+
+  // Setar novo timer de 3.5 segundos (tempo de pausa para considerar que parou de digitar)
+  typingQueues[jid].timer = setTimeout(async () => {
+    const batchedMsgs = typingQueues[jid].messages;
+    typingQueues[jid].messages = []; // zera fila
+    typingQueues[jid].timer = null;  // zera timer
+
+    if (batchedMsgs.length === 0) return;
+
+    // Processa o batch inteiro 
+    await withJidLock(jid, () => _processMessageBatch(jid, batchedMsgs));
+  }, 3500);
 }
 
-async function _processMessage(msg) {
-  const jid = msg.key.remoteJid;
-  const messageType = getMessageType(msg);
-  const text = getMessageText(msg);
-
+// ─── PROCESSAR LOTE (BATCH) DE MENSAGENS ──────────────────────────────────
+async function _processMessageBatch(jid, batchedMsgs) {
+  // Inicializar estado se não existir
   if (!state.conversations[jid]) {
     updateConversation(jid, {
       data_inicio: new Date().toISOString(),
@@ -1481,17 +1507,41 @@ async function _processMessage(msg) {
 
   updateConversation(jid, { lastActivity: Date.now() });
 
-  addToLog({
-    type: 'incoming', jid,
-    text: text || `[${messageType}]`,
-    cliente: state.conversations[jid]?.cliente,
-    from: 'cliente'
-  });
+  // Agrupar textos e identificar se há mídias
+  let combinedText = '';
+  let midiasObj = {};
 
-  const conv = state.conversations[jid];
-  const msgs = [...(conv.mensagens || [])];
-  msgs.push({ de: 'cliente', tipo: messageType, conteudo: text || `[${messageType}]`, hora: new Date().toISOString() });
-  updateConversation(jid, { mensagens: msgs });
+  for (const msg of batchedMsgs) {
+    const msgType = getMessageType(msg);
+    const text = getMessageText(msg);
+
+    // Log interno individual
+    addToLog({
+      type: 'incoming', jid,
+      text: text || `[${msgType}]`,
+      cliente: state.conversations[jid]?.cliente,
+      from: 'cliente'
+    });
+
+    const conv = state.conversations[jid];
+    const historicoMsgs = [...(conv.mensagens || [])];
+    historicoMsgs.push({ de: 'cliente', tipo: msgType, conteudo: text || `[${msgType}]`, hora: new Date().toISOString() });
+    updateConversation(jid, { mensagens: historicoMsgs });
+
+    // Agrupar textos (separando por espaço/ponto)
+    if (text && text.trim().length > 0) {
+      if (combinedText.length > 0) combinedText += '. ';
+      combinedText += text.trim();
+    }
+
+    // Salvar mídias (pegar a última de cada tipo)
+    if (msgType === 'imageMessage') midiasObj.image = msg;
+    if (msgType === 'videoMessage') midiasObj.video = msg;
+    if (msgType === 'audioMessage') midiasObj.audio = msg;
+    if (msgType === 'documentMessage') midiasObj.document = msg;
+    if (msgType === 'listResponseMessage') midiasObj.list = msg;
+    if (msgType === 'buttonsResponseMessage' || msgType === 'interactiveResponseMessage') midiasObj.button = msg;
+  }
 
   if (!state.globalBotActive) return;
   if (state.conversations[jid].status === 'humano') return;
@@ -1514,7 +1564,7 @@ async function _processMessage(msg) {
   }
 
   // Reiniciar conversa
-  if (text && text.trim().toLowerCase() === 'reiniciar') {
+  if (combinedText.toLowerCase() === 'reiniciar') {
     console.log(`🔄 Reinício: ${jid} `);
     updateConversation(jid, {
       cliente: null, bairro: null,
@@ -1536,52 +1586,59 @@ async function _processMessage(msg) {
     return;
   }
 
-  // ── Resposta de lista interativa (listResponseMessage) ───────────────────
-  const listResp = msg.message?.listResponseMessage;
-  if (listResp) {
+  // 1. Processar interações UI (listas/botões)
+  if (midiasObj.list) {
+    const listResp = midiasObj.list.message?.listResponseMessage;
     const rowId = listResp.singleSelectReply?.selectedRowId || '';
     const titulo = listResp.title || rowId;
-    console.log(`📋 Lista selecionada: rowId = "${rowId}" título = "${titulo}"`);
     await processFlow(jid, rowId || titulo);
     return;
   }
-
-  // ── Resposta de botão clássico (buttonsResponseMessage) ──────────────────
-  const buttonResponse = msg.message?.buttonsResponseMessage;
-  if (buttonResponse) {
-    const buttonId = buttonResponse.selectedButtonId || '';
-    const buttonText = buttonResponse.selectedDisplayText || buttonId;
-    console.log(`🔘 Botão clicado: id = "${buttonId}" texto = "${buttonText}"`);
-    await processFlow(jid, buttonId || buttonText);
-    return;
-  }
-
-  // ── Resposta de botão moderno (interactiveResponseMessage) ───────────────
-  const interactiveResp = msg.message?.interactiveResponseMessage;
-  if (interactiveResp) {
-    try {
-      const params = JSON.parse(interactiveResp.nativeFlowResponseMessage?.paramsJson || '{}');
-      const buttonId = params.id || '';
-      console.log(`🔘 Botão interativo clicado: id = "${buttonId}"`);
-      await processFlow(jid, buttonId);
-    } catch (e) {
-      console.warn('⚠️ Erro ao parsear interactiveResponseMessage:', e.message);
+  if (midiasObj.button) {
+    const btnResp = midiasObj.button.message?.buttonsResponseMessage;
+    const intResp = midiasObj.button.message?.interactiveResponseMessage;
+    let buttonId = ''; let buttonText = '';
+    if (btnResp) {
+      buttonId = btnResp.selectedButtonId || '';
+      buttonText = btnResp.selectedDisplayText || buttonId;
+      await processFlow(jid, buttonId || buttonText);
+    } else if (intResp) {
+      try {
+        const params = JSON.parse(intResp.nativeFlowResponseMessage?.paramsJson || '{}');
+        buttonId = params.id || '';
+        await processFlow(jid, buttonId);
+      } catch (e) { }
     }
     return;
   }
 
-  if (messageType === 'audioMessage') {
-    await handleAudio(jid, msg);
-  } else if (messageType === 'imageMessage') {
-    await handleImage(jid, msg);
-  } else if (messageType === 'videoMessage') {
-    await handleVideo(jid, msg);
-  } else if (messageType === 'documentMessage' || messageType === 'documentWithCaptionMessage') {
-    await handleDocument(jid);
-  } else {
-    const handled = await processFlow(jid, text || '');
+  // 2. Processar Áudio
+  // Se mandou texto + áudio agrupado, processa áudio
+  if (midiasObj.audio) {
+    await handleAudio(jid, midiasObj.audio);
+    return;
+  }
+
+  // 3. Processar Mídias Visuais (Imagens/Vídeos)
+  // Se enviou foto junto com texto (ex: foto explicando "essa é a janela, tem 1x1"), processamos ambos
+  if (midiasObj.image || midiasObj.video || midiasObj.document) {
+    if (combinedText.length > 0) {
+      // Usa text combinado como caption se houver
+      if (midiasObj.image) midiasObj.image.message.imageMessage.caption = combinedText;
+      if (midiasObj.video) midiasObj.video.message.videoMessage.caption = combinedText;
+    }
+
+    if (midiasObj.image) await handleImage(jid, midiasObj.image);
+    else if (midiasObj.video) await handleVideo(jid, midiasObj.video);
+    else if (midiasObj.document) await handleDocument(jid);
+    return;
+  }
+
+  // 4. Somente texto
+  if (combinedText.length > 0) {
+    const handled = await processFlow(jid, combinedText);
     if (!handled && state.conversations[jid]?._boas_vindas_confirmada) {
-      await processMessage(jid, text || '');
+      await processMessage(jid, combinedText);
     }
   }
 }
