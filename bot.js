@@ -258,7 +258,9 @@ function _extractLocally(texto, existingInfo = {}, ultimoStep = '') {
     'obrigada', 'gostaria', 'orçamento', 'orcamento', 'colocar', 'instalar',
     'calor', 'claridade', 'privacidade', 'estética', 'estetica', 'casa', 'apartamento',
     'dois', 'tres', 'quatro', 'cinco', 'bairro', 'moro', 'fico', 'estou', 'sou',
-    'são', 'tenho', 'desde', 'urgente', 'urgente', 'pode', 'claro', 'ok', 'tudo'
+    'são', 'tenho', 'desde', 'urgente', 'pode', 'claro', 'ok', 'tudo',
+    'de', 'da', 'do', 'dos', 'das', 'em', 'no', 'na', 'nos', 'nas',
+    'por', 'com', 'um', 'uns', 'umas', 'ao', 'aos', 'se', 'me'
   ]);
 
   // ── Nome ──────────────────────────────────────────────────────────────────
@@ -318,28 +320,33 @@ function _extractLocally(texto, existingInfo = {}, ultimoStep = '') {
     'funcionários', 'funcionarios', 'paratibe', 'gramame', 'mumbaba',
     'ouro preto', 'jardim são paulo', 'jardim sao paulo', 'rangel',
     'são josé', 'sao jose', 'padre zé', 'padre ze', 'grotão', 'grotao',
-    'alto do mateus', 'ernani sátiro', 'ernani satiro', 'varjão', 'varjao'
+    'alto do mateus', 'ernani sátiro', 'ernani satiro', 'varjão', 'varjao',
+    'cabedelo', 'santa rita', 'bayeux', 'conde', 'lucena', 'pitimbu'
   ];
 
   if (!info.bairro) {
-    // Padrão por texto: "moro no/em X", "bairro X", "fico em X"
+    // Padrao por texto: "moro no/em X", "bairro X", "fico em X"
+    // NOTA: removido "sou de/do/da" pois eh ambiguo (pode se referir a cidade, nao a bairro)
     const bairroMatch = texto.match(
-      /(?:moro (?:no|na|em)\s+|bairro[:\s]+|fico (?:no|na|em)\s+|(?:sou do|sou da|sou de)\s+)([A-Za-zÀ-ú][A-Za-zÀ-ú\s]{1,25}?)(?:\s|$|,|\.)/i
+      /(?:moro\s+(?:no|na|em)\s+|bairro[:\s]+|fico\s+(?:no|na|em)\s+|sou\s+do\s+bairro\s+)([A-Za-z\u00c0-\u00fa][A-Za-z\u00c0-\u00fa\s]{1,25}?)(?:\s|$|,|\.)/i
     );
 
     for (const b of BAIRROS_JP) {
       if (new RegExp(`\\b${b}\\b`, 'i').test(textoLower)) {
         info.bairro = b.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
         extraiu = true;
-        console.log(`🔍 Bairro lista (local): ${info.bairro}`);
+        console.log(`\ud83d\udd0d Bairro lista (local): ${info.bairro}`);
         break;
       }
     }
 
     if (!info.bairro && bairroMatch) {
-      info.bairro = bairroMatch[1].trim();
-      extraiu = true;
-      console.log(`🔍 Bairro regex (local): ${info.bairro}`);
+      const bairroCapturado = bairroMatch[1].trim();
+      if (!/^jo[a\u00e3]o\s*pessoa$/i.test(bairroCapturado)) {
+        info.bairro = bairroCapturado;
+        extraiu = true;
+        console.log(`\ud83d\udd0d Bairro regex (local): ${info.bairro}`);
+      }
     }
   }
 
@@ -419,20 +426,42 @@ function _extractLocally(texto, existingInfo = {}, ultimoStep = '') {
     extraiu = true;
     console.log(`🔍 Medidas: cliente não tem → ${qtd} janela(s) como "a confirmar" (_medidas_dispensadas=true)`);
   } else {
+    // Normaliza texto antes de aplicar regex:
+    // - "1.por" -> "1 por" (ponto acidental antes de "por")
+    // - palavras numericas: "um"->"1", "dois"->"2", "tres"->"3"
+    const textoNorm = texto
+      .replace(/(\d+)\s*\.\s*(por|x)/gi, '$1 $2')
+      .replace(/\bum\b/gi, '1').replace(/\bdois\b/gi, '2').replace(/\btr[e\u00ea]s\b/gi, '3');
+
     // Aceita: 1x1, 1.5x2, 1,2x0,8, "1 por 1", "1.5 por 2"
-    const medidaMatches = texto.match(
-      /(\d+[\.,]\d+|\d+)\s*(?:[xX×]|\s+por\s+)\s*(\d+[\.,]\d+|\d+)\s*(cm|m|metros?|metro|centímetros?)?/gi
+    const medidaMatches = textoNorm.match(
+      /(\d+[.,]\d+|\d+)\s*(?:[xX\u00d7]|\s+por\s+)\s*(\d+[.,]\d+|\d+)\s*(cm|m|metros?|metro|cent\u00edmetros?)?/gi
     );
     if (medidaMatches && medidaMatches.length > 0) {
       for (const m of medidaMatches) {
-        const normalized = m.replace(/\s+por\s+/gi, 'x').replace(/,/g, '.');
+        const normalized = m
+          .replace(/\s+por\s+/gi, 'x').replace(/,/g, '.')
+          .replace(/\s*(cm|m|metros?|metro|cent\u00edmetros?)$/gi, '').trim();
         if (!info.janelas.find(j => j.medida === normalized)) {
           info.janelas.push({ medida: normalized, numero: info.janelas.length + 1 });
           extraiu = true;
-          // Se o cliente estava confirmando que tem medidas, limpar essa flag (agora temos valor real)
           if (info._confirmou_ter_medidas) delete info._confirmou_ter_medidas;
-          console.log(`🔍 Medida (local): ${normalized}`);
+          console.log(`\ud83d\udd0d Medida (local): ${normalized}`);
         }
+      }
+    }
+
+    // Detectar "cada uma / as duas / iguais" -> replicar ultima medida para janelas restantes
+    const indicaIguais = /cada\s+uma|cada\s+janela|as\s+(?:duas|tr[e\u00ea]s|quatro|cinco)|iguais?|mesma\s+medida|mesmas\s+medidas/i.test(texto);
+    if (indicaIguais && info.janelas.length > 0 && info.quantidade_janelas > info.janelas.length) {
+      const ultimaMedida = info.janelas[info.janelas.length - 1].medida;
+      if (ultimaMedida && /\d/.test(ultimaMedida)) {
+        while (info.janelas.length < info.quantidade_janelas) {
+          info.janelas.push({ medida: ultimaMedida, numero: info.janelas.length + 1 });
+        }
+        extraiu = true;
+        if (info._confirmou_ter_medidas) delete info._confirmou_ter_medidas;
+        console.log(`\ud83d\udd0d Medidas: "cada uma" -> replicado ${ultimaMedida} para todas as janelas`);
       }
     }
   }
