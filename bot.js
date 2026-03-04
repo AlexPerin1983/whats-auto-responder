@@ -575,8 +575,8 @@ JSON (apenas os campos novos encontrados na mensagem):`;
 
   try {
     const response = await groq.chat.completions.create({
-      model: 'llama-3.1-8b-instant',
-      max_tokens: 500,
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 300,
       messages: [{
         role: 'user',
         content: systemPrompt
@@ -623,6 +623,63 @@ function _applyLLMExtraction(extracted, info) {
   if (extracted.pelicula_desejada && !info.pelicula_desejada) { info.pelicula_desejada = extracted.pelicula_desejada; changed = true; }
 
   return { info, changed };
+}
+
+// ─── GERAR RESPOSTA COM LLM-70b ──────────────────────────────────────────────
+async function _generateResponseWithLLM(jid, userMessage, nextStep, nextText) {
+  if (!groq || !nextText) return nextText;
+
+  const conv = state.conversations[jid];
+  const info = conv?.informacoes_coletadas || {};
+  const janelasSummary = (info.janelas || [])
+    .filter(j => j.medida && /\d/.test(j.medida))
+    .map(j => `Superfície ${j.numero}: ${j.medida}`).join(', ');
+
+  const problemaLabel = { calor: 'Calor', privacidade: 'Privacidade', claridade: 'Claridade', estetica: 'Estética' };
+
+  const systemPrompt = `Você é o assistente de WhatsApp da Películas Brasil, em João Pessoa-PB. O dono é Alex.
+Instalamos películas: Nano Cerâmica, Espelhada, Fumê, Fosca.
+
+== STATUS ATUAL ==
+Nome: ${info.nome || 'não coletado'}
+Bairro: ${info.bairro || 'não coletado'}
+Tipo de imóvel: ${info.tipo_imovel || 'não coletado'}
+Problema principal: ${problemaLabel[info.problema_principal] || info.problema_principal || 'não coletado'}
+Película: ${info.pelicula_indicada || 'não definida'}
+Qtd superfícies: ${info.quantidade_janelas || 'não coletado'}
+Medidas: ${janelasSummary || 'nenhuma'}
+Fotos: ${info.fotos_recebidas === true ? 'recebidas' : info.fotos_recebidas === 'sem_foto' ? 'cliente não tem' : 'pendentes'}
+
+== PRÓXIMA AÇÃO OBRIGATÓRIA ==
+Encaminhe o cliente para: "${nextText}"
+Reescreva isso de forma natural. Se o cliente informou algo agora, confirme brevemente (ex: Anotado!) e siga.
+
+== REGRAS ABSOLUTAS ==
+1. NUNCA mencione preços, formas de pagamento, agenda ou prazos. Essa parte é com o Alex.
+2. NUNCA responda sobre película de carro/automotiva.
+3. Se o cliente disser que não tem foto, aceite sem insistir.
+4. Resposta curta (máx 3 linhas).
+5. Máximo 2 emojis. Seja amigável e direto.`;
+
+  try {
+    const resp = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 200,
+      temperature: 0.35,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage }
+      ]
+    });
+    const llmText = resp.choices[0]?.message?.content?.trim();
+    if (llmText && llmText.length > 5) {
+      console.log(`🤖 LLM resposta (${nextStep}): ${llmText.substring(0, 80)}...`);
+      return llmText;
+    }
+  } catch (err) {
+    console.warn('⚠️ LLM response generation falhou:', err.message?.substring(0, 80));
+  }
+  return nextText;
 }
 
 // ─── VERIFICAR SE O FLOW ESTÁ COMPLETO ──────────────────────────────────────
@@ -1165,44 +1222,14 @@ async function processMessage(jid, userMessage) {
     return;
   }
 
-  // ═══ ETAPA 4: GERAR RESPOSTA (100% templates, sem LLM) ═══
-  const info = state.conversations[jid].informacoes_coletadas || {};
-  const nome = (info.nome || '').split(' ')[0];
-
-  const msgLower = (userMessage || '').toLowerCase().trim();
-  const ehSaudacao = /^(oi[eê]?|ol[aá]|hey|eae|opa|bom dia|boa tarde|boa noite|tudo bem|e a[ií]|fala)\b/i.test(msgLower);
-  const ehReclamacao = /^(eu j[aá] disse|j[aá] falei|j[aá] mandei|repet|de novo|não entend|nao entend)/i.test(msgLower);
-  const ehCurto = msgLower.length <= 4;
-
-  // Detectar se cliente disse que não tem medidas (para mensagem especial)
-  const disseSemMedidas =
-    /n[aã]o\s+(?:sei|tenho|lembro|possuo|consigo)[^.!?]*medidas?/i.test(userMessage) ||
-    /sem\s+medidas?|n[aã]o\s+tenho\s+as[.\s]+medidas?/i.test(msgLower) ||
-    /medidas?[^.!?]*n[aã]o\s+(?:sei|tenho)/i.test(msgLower);
-
-  // Não usar confirmacao_dados quando ainda pedindo medidas (ficaria estranho "Anotei tudo + qual medida?")
-  const stepPedindoMedidas = next.step === 'medidas' || next.step === 'medida_faltante';
-
-  let response;
-  if (ehReclamacao) {
-    response = `Desculpa, ${nome || 'me desculpe'} ! 😅 Vou direto ao ponto: \n\n${next.text} `;
-  } else if (disseSemMedidas) {
-    // Resposta empática + próximo passo (fotos, se medidas preenchidas como "a confirmar")
-    response = `Tudo bem, ${nome || ''} ! 😊 O Alex consegue medir no momento da visita.\n\n${next.text} `.trim();
-  } else if (ehSaudacao || ehCurto || stepPedindoMedidas) {
-    response = next.text;
-  } else {
-    const confirmacao = pickTemplate('confirmacao_dados', { nome });
-    response = `${confirmacao} \n\n${next.text} `;
-  }
-
-  // Salvar qual foi a última pergunta enviada (para interpretar respostas ambíguas depois)
+  // ═══ ETAPA 4: GERAR RESPOSTA VIA LLM (com fallback para template) ═══
   const updates = { _ultimo_step: next.step };
   if (next.step === 'medidas' || next.step === 'medida_faltante' || next.step === 'medida_janela') {
     updates._medidas_solicitadas = true; // Já perguntamos sobre medidas
   }
   updateConversation(jid, updates);
 
+  const response = await _generateResponseWithLLM(jid, userMessage, next.step, next.text);
   await sendWithDelay(jid, { text: response });
 }
 
