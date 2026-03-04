@@ -184,7 +184,8 @@ const TEMPLATES = {
     '{nome}, e a medida da *{tipo}*? Se não souber, tudo bem! 😊',
   ],
   pedir_fotos: [
-    '{nome}, pode me mandar uma *foto* do local onde vai colocar a película? Isso ajuda a dar um orçamento mais preciso! 📸',
+    '{nome}, você consegue enviar uma *foto* ou um *vídeo* rápido do local para eu entender melhor? Se puder, ajuda bastante no orçamento! 😊',
+    '{nome}, se conseguir me mandar uma *foto* ou *vídeo* do ambiente, ajuda muito o Alex no orçamento! Tem como? 📸',
   ],
   pedir_pelicula: [
     '{nome}, qual tipo de película você prefere? (*fumê*, *espelhada*, *nano cerâmica*, *fosca*, ou *não sabe*?)',
@@ -518,10 +519,21 @@ function _extractLocally(texto, existingInfo = {}, ultimoStep = '') {
       /sem\s+foto/i.test(textoLower) ||
       /foto\s+n[aã]o\s+(?:tenho|vou)|n[aã]o\s+(?:tenho|terei)\s+foto/i.test(textoLower) ||
       /j[aá]\s+disse\s+que\s+n[aã]o\s+(?:tenho|vou).{0,15}foto/i.test(textoLower);
-    if (naoTemFoto) {
+
+    const prometeMandar =
+      /vou\s+(?:tirar|mandar|enviar)[\s\w]*(?:depois|mais\s+tarde|amanh[aã]|de\s+noite|quando\s+chegar)/i.test(textoLower) ||
+      /mais\s+tarde\s+(?:eu\s+)?(?:tiro|mando|envio)/i.test(textoLower) ||
+      /j[aá]\s+disse\s+que\s+vou/i.test(textoLower) ||
+      /depois\s+(?:eu\s+)?(?:tiro|mando|envio)/i.test(textoLower);
+
+    if (prometeMandar) {
+      info.fotos_recebidas = 'prometeu_enviar_depois';
+      extraiu = true;
+      console.log('🔍 Fotos: cliente prometeu enviar mais tarde');
+    } else if (naoTemFoto) {
       info.fotos_recebidas = 'sem_foto';
       extraiu = true;
-      console.log('🔍 Fotos: cliente disse que não tem foto → fotos_recebidas = "sem_foto"');
+      console.log('🔍 Fotos: cliente disse que não tem foto');
     }
   }
 
@@ -657,7 +669,7 @@ Problema principal: ${problemaLabel[info.problema_principal] || info.problema_pr
 Película: ${info.pelicula_indicada || 'não definida'}
 Qtd superfícies: ${info.quantidade_janelas || 'não coletado'}
 Medidas: ${janelasSummary || 'nenhuma'}
-Fotos: ${info.fotos_recebidas === true ? 'recebidas' : info.fotos_recebidas === 'sem_foto' ? 'cliente não tem' : 'pendentes'}
+Fotos: ${info.fotos_recebidas === true ? 'recebidas' : info.fotos_recebidas === 'prometeu_enviar_depois' ? 'vai enviar mais tarde' : info.fotos_recebidas === 'sem_foto' ? 'cliente não tem' : 'pendentes'}
 
 == PRÓXIMA AÇÃO OBRIGATÓRIA ==
 Encaminhe o cliente para: "${nextText}"
@@ -789,7 +801,7 @@ ${problemaEmoji[info.problema_principal] || '🎯'} Problema: ${problemaLabel[in
 
 ${janelasText || '📐 Medidas: N/I'}
 
-📸 Fotos: ${info.fotos_recebidas === true ? 'Sim \u2705' : info.fotos_recebidas === 'sem_foto' ? 'N\u00e3o (cliente informou) \u274c' : info.fotos_recebidas === 'pendente' ? 'Pendente \u23f3' : 'N\u00e3o \u274c'}
+📸 Fotos: ${info.fotos_recebidas === true ? 'Sim \u2705' : info.fotos_recebidas === 'prometeu_enviar_depois' ? 'Vai enviar mais tarde \u23f3' : info.fotos_recebidas === 'sem_foto' ? 'N\u00e3o (cliente informou) \u274c' : info.fotos_recebidas === 'pendente' ? 'Pendente \u23f3' : 'N\u00e3o \u274c'}
 ⏱ Início: ${dataInicio} `;
 }
 
