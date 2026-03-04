@@ -366,7 +366,11 @@ function _extractLocally(texto, existingInfo = {}, ultimoStep = '') {
     else if (textoLower === 'prob_estetica') { info.problema_principal = 'estetica'; extraiu = true; }
     // From text
     else if (/calor|quent[eo]|t[eé]rmico|esquenta/.test(textoLower)) { info.problema_principal = 'calor'; extraiu = true; }
-    else if (/privacidade|privado|ver[aà] dentro|veem|olhando|bisbilhot|n[aã]o v[eê]|devassa/.test(textoLower)) { info.problema_principal = 'privacidade'; extraiu = true; }
+    else if (
+      /privacidade|privado|ver[aà] dentro|veem|olhando|bisbilhot|n[aã]o v[eê]|devassa/.test(textoLower) ||
+      /ningu[eé]m\s*(?:me\s*)?v(?:eja|er|ê)|não\s+me\s+veja|quem\s+t[aá]\s+fora/.test(textoLower) ||
+      /fora\s+n[aã]o\s+(?:me\s+)?v|espelhad|ver\s+l[aá]\s+fora.*n[aã]o\s+me\s+v|n[aã]o\s+me\s+v.*ver\s+l[aá]\s+fora/.test(textoLower)
+    ) { info.problema_principal = 'privacidade'; extraiu = true; }
     else if (/clarid|claridade|sol demais|muito sol|ofuscam|deslumbr|luminosidade/.test(textoLower)) { info.problema_principal = 'claridade'; extraiu = true; }
     else if (/est[eé]tica|bonit[ao]|moderno|decorar|visual|aparência|aparencia/.test(textoLower)) { info.problema_principal = 'estetica'; extraiu = true; }
     if (info.problema_principal) {
@@ -438,7 +442,7 @@ function _extractLocally(texto, existingInfo = {}, ultimoStep = '') {
   if (pedindoMedidasCtx && !naoTemMedida && !info._confirmou_ter_medidas && !info._medidas_dispensadas) {
     const temNumeros = /(\d+[.,]\d+|\d+)\s*(?:[xX×]|\s+por\s+)/.test(texto);
     if (!temNumeros) {
-      const respostaAfirmativa = /^(?:tenho(?:\s+sim)?\.?|sim(?:\s+tenho)?\.?|claro\.?|ok\.?|tenho\s+as\s+medidas?\.?|sim\s+tenho\s+as\s+medidas?\.?)$/i.test(texto.trim());
+      const respostaAfirmativa = /^(?:temos?(?:\s+sim)?\.?|tenho(?:\s+sim)?\.?|sim(?:\s+(?:tenho|temos))?\.?|claro\.?|ok\.?|tenho\s+as\s+medidas?\.?|temos\s+as\s+medidas?\.?|sim\s+tenho\s+as\s+medidas?\.?)$/i.test(texto.trim());
       if (respostaAfirmativa && !info.janelas.some(j => j.medida && /\d/.test(j.medida))) {
         info._confirmou_ter_medidas = true;
         extraiu = true;
@@ -503,10 +507,14 @@ REGRAS RÍGIDAS:
 - NÃO preencha campos que não foram mencionados pelo cliente
 - NÃO use informações de mensagens anteriores, apenas o texto atual
 - Se um campo não está na mensagem, simplesmente não inclua no JSON
-- nome: apenas se o cliente disse o nome dele (não o nome de outras pessoas)
-- bairro: apenas bairros reais de João Pessoa/PB, em letras minúsculas. Não invente bairros.
+- nome: apenas se o cliente disse o nome dele explícita e claramente
+- bairro: apenas bairros reais de João Pessoa/PB (ex: Tambaú, Manaíra, Bessa, Torre, Aeroclube, Bancários, etc.). ATENÇÃO: "João Pessoa" é o nome da CIDADE, não é um bairro. Nunca use "joão pessoa" ou "joao pessoa" como bairro. Só inclua bairro se o cliente citou explicitamente um bairro.
 - tipo_imovel: APENAS uma das 3 opções exatas: "casa", "apartamento" ou "comercial"
-- problema_principal: APENAS uma das 4 opções exatas: "calor", "privacidade", "claridade" ou "estetica"
+- problema_principal: APENAS uma das 4 opções exatas:
+  * "calor" → cliente reclama de calor/sol esquentar demais
+  * "privacidade" → cliente quer que pessoas de fora não vejam o interior. Ex: "quem tá fora não me veja", "não quero que vejam dentro", "película espelhada"
+  * "claridade" → cliente reclama de excesso de luz/claridade/ofuscamento
+  * "estetica" → cliente quer modernizar/decorar
 - quantidade_janelas: apenas se o cliente citou um número de janelas/portas/superfícies (número inteiro)
 - pelicula_desejada: APENAS uma das opções: "fumê", "espelhada", "nano cerâmica", "fosca", "segurança" ou "não sei"
 
@@ -549,7 +557,16 @@ function _applyLLMExtraction(extracted, info) {
   let changed = false;
 
   if (extracted.nome && !info.nome) { info.nome = extracted.nome; changed = true; }
-  if (extracted.bairro && !info.bairro) { info.bairro = extracted.bairro; changed = true; }
+  if (extracted.bairro && !info.bairro) {
+    // Bloquear alucinacao da LLM: 'joao pessoa'/'jp' é a cidade, não um bairro
+    const bairroNormalizado = (extracted.bairro || '').toLowerCase().trim();
+    const ehCidade = /^jo[aã]o\s*pessoa$|^\bj\.?p\.?$/.test(bairroNormalizado);
+    if (!ehCidade && bairroNormalizado.length > 1) {
+      info.bairro = extracted.bairro; changed = true;
+    } else {
+      console.warn(`⚠️ LLM retornou bairro inválido (nome da cidade): "${extracted.bairro}" — ignorado.`);
+    }
+  }
   if (extracted.tipo_imovel && !info.tipo_imovel) { info.tipo_imovel = extracted.tipo_imovel; changed = true; }
   if (extracted.problema_principal && !info.problema_principal) {
     info.problema_principal = extracted.problema_principal; changed = true;
