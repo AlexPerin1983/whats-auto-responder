@@ -391,7 +391,8 @@ function _extractLocally(texto, existingInfo = {}, ultimoStep = '') {
   if (!Array.isArray(info.janelas)) info.janelas = [];
 
   // Detectar quando cliente não tem medidas → preencher como "a confirmar" e NÃO pedir de novo
-  const pedindoMedidasCtx = ultimoStep === 'medidas' || ultimoStep === 'medida_faltante';
+  // Inclui 'medida_janela' para continuar entendendo respostas durante coleta janela-a-janela
+  const pedindoMedidasCtx = ultimoStep === 'medidas' || ultimoStep === 'medida_faltante' || ultimoStep === 'medida_janela';
   // Respostas negativas simples — aceitas SOMENTE quando o bot já havia perguntado as medidas
   const naoSeiSimples = /^(eu\s+)?n[aã]o\s+(sei|tenho)\.?$|^n[aã]o\.?$|^não\.?$|^nao\.?$|^n[aã]o\s+sei\s+a\s+medida\.?$/i.test(texto.trim());
   // Respostas negativas explícitas (com a palavra "medida") — válidas em qualquer contexto
@@ -424,8 +425,24 @@ function _extractLocally(texto, existingInfo = {}, ultimoStep = '') {
         if (!info.janelas.find(j => j.medida === normalized)) {
           info.janelas.push({ medida: normalized, numero: info.janelas.length + 1 });
           extraiu = true;
+          // Se o cliente estava confirmando que tem medidas, limpar essa flag (agora temos valor real)
+          if (info._confirmou_ter_medidas) delete info._confirmou_ter_medidas;
           console.log(`🔍 Medida (local): ${normalized}`);
         }
+      }
+    }
+  }
+
+  // ── Detectar resposta AFIRMATIVA quando bot perguntou medidas ("tenho sim", "sim", etc.) ────
+  // Nesse caso o cliente confirmou que TEM as medidas mas ainda não forneceu os números
+  if (pedindoMedidasCtx && !naoTemMedida && !info._confirmou_ter_medidas && !info._medidas_dispensadas) {
+    const temNumeros = /(\d+[.,]\d+|\d+)\s*(?:[xX×]|\s+por\s+)/.test(texto);
+    if (!temNumeros) {
+      const respostaAfirmativa = /^(?:tenho(?:\s+sim)?\.?|sim(?:\s+tenho)?\.?|claro\.?|ok\.?|tenho\s+as\s+medidas?\.?|sim\s+tenho\s+as\s+medidas?\.?)$/i.test(texto.trim());
+      if (respostaAfirmativa && !info.janelas.some(j => j.medida && /\d/.test(j.medida))) {
+        info._confirmou_ter_medidas = true;
+        extraiu = true;
+        console.log('🔍 Cliente confirmou ter medidas → aguardando valores janela por janela');
       }
     }
   }
@@ -581,17 +598,31 @@ function _getNextStep(jid) {
   if (!info.tipo_imovel) return { step: 'tipo_imovel', text: pickTemplate('pedir_tipo_imovel', { nome }) };
   if (!info.quantidade_janelas) return { step: 'quantidade', text: pickTemplate('pedir_quantidade', { nome }) };
 
-  // Medidas: pergunta UMA ÚNICA VEZ (opcional — cliente pode não saber)
-  // Não perguntar se: já perguntou (_medidas_solicitadas) OU cliente dispensou (_medidas_dispensadas)
-  const mediasJaResolvidas = conv._medidas_solicitadas || info._medidas_dispensadas;
-  if (!mediasJaResolvidas) {
-    const qtd = info.quantidade_janelas;
-    const temMedidasReais = Array.isArray(info.janelas) && info.janelas.some(j => j.medida && /\d/.test(j.medida));
-    if (!temMedidasReais) {
-      // Primeiro e único pedido de medidas — aviso que é opcional
+  // ── Medidas: lógica completa ────────────────────────────────────────────────
+  const qtd = info.quantidade_janelas;
+  const temMedidasReais = Array.isArray(info.janelas) && info.janelas.some(j => j.medida && /\d/.test(j.medida));
+  const medidasDispensadas = !!info._medidas_dispensadas;
+  const confirmouTerMedidas = !!info._confirmou_ter_medidas;
+
+  if (!medidasDispensadas) {
+    if (confirmouTerMedidas || temMedidasReais) {
+      // Cliente disse que tem medidas ou já deu alguma: coletar janela por janela
+      const janelasDadas = Array.isArray(info.janelas)
+        ? info.janelas.filter(j => j.medida && /\d/.test(j.medida)).length : 0;
+      if (janelasDadas < qtd) {
+        const numAtual = janelasDadas + 1;
+        const textoMedida = qtd === 1
+          ? `${nome ? nome + ', qual' : 'Qual'} a *medida* da superfície? 📏\n(Largura × altura, ex: 1,20 × 1,50m)`
+          : `${nome ? nome + ', qual' : 'Qual'} a *medida* da janela *${numAtual} de ${qtd}*? 📏\n(Ex: 1,20 × 1,50m)`;
+        return { step: 'medida_janela', text: textoMedida };
+      }
+      // Todas as medidas coletadas → seguir
+    } else if (!conv._medidas_solicitadas) {
+      // Primeira vez perguntando — com aviso de que é opcional
       if (qtd === 1) return { step: 'medidas', text: pickTemplate('pedir_medidas_unica', { nome }) };
       else return { step: 'medidas', text: pickTemplate('pedir_medidas_varias', { nome, num: '1', total: String(qtd) }) };
     }
+    // _medidas_solicitadas=true mas sem resposta de medida e sem negativa → avançar para fotos
   }
 
   if (!info.fotos_recebidas) return { step: 'fotos', text: pickTemplate('pedir_fotos', { nome }) };
@@ -1105,8 +1136,8 @@ async function processMessage(jid, userMessage) {
 
   // Salvar qual foi a última pergunta enviada (para interpretar respostas ambíguas depois)
   const updates = { _ultimo_step: next.step };
-  if (next.step === 'medidas' || next.step === 'medida_faltante') {
-    updates._medidas_solicitadas = true; // Não perguntar medidas de novo
+  if (next.step === 'medidas' || next.step === 'medida_faltante' || next.step === 'medida_janela') {
+    updates._medidas_solicitadas = true; // Já perguntamos sobre medidas
   }
   updateConversation(jid, updates);
 
