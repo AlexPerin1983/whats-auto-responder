@@ -206,7 +206,7 @@ const TEMPLATES = {
     '{nome}, para dar um visual moderno recomendo o *Espelhado* ou *Fosco* 🎨 — elegante e funcional ao mesmo tempo.\n\nVamos ver o que você precisa!',
   ],
   resposta_automotivo: [
-    '{nome}, para insulfilm automotivo é melhor você procurar um especialista em vidros de carro. A gente trabalha com películas para janelas residenciais e comerciais. Boa sorte! 🚗',
+    '{nome}, quando falamos em carro a gente nesse momento não faz aplicação nesse seguimento, mas posso te indicar alguém, é o pessoal da Fume JP: (83) 98783-2318. Eles são ótimos! 🚗',
   ],
   resposta_superficie: [
     '{nome}, obrigado pela informação! Se você tiver dúvidas sobre qual película é melhor para essa superfície, me avisa que a gente conversa! 😊',
@@ -250,6 +250,13 @@ function _extractLocally(texto, existingInfo = {}, ultimoStep = '') {
   const info = { ...existingInfo };
   const textoLower = (texto || '').toLowerCase().trim();
   let extraiu = false;
+
+  // ── Situação Específica: Automotivo / Carro ───────────────────────────────────────
+  if (/\b(?:carro|auto|autom[oó]veis|autom[oó]vel|ve[ií]culo|moto|caminh[aã]o|vidro\s+do\s+carro|pel[ií]cula\s+automotiv)\b/i.test(textoLower)) {
+    info._situacao = 'automotivo';
+    extraiu = true;
+    console.log('🔍 Situação (local): automotivo detectado');
+  }
 
   // Palavras que NÃO são nomes de pessoas
   const NAO_NOMES = new Set([
