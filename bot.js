@@ -260,7 +260,8 @@ function _extractLocally(texto, existingInfo = {}, ultimoStep = '') {
     'dois', 'tres', 'quatro', 'cinco', 'bairro', 'moro', 'fico', 'estou', 'sou',
     'são', 'tenho', 'desde', 'urgente', 'pode', 'claro', 'ok', 'tudo',
     'de', 'da', 'do', 'dos', 'das', 'em', 'no', 'na', 'nos', 'nas',
-    'por', 'com', 'um', 'uns', 'umas', 'ao', 'aos', 'se', 'me'
+    'por', 'com', 'um', 'uns', 'umas', 'ao', 'aos', 'se', 'me',
+    'show', 'beleza', 'legal', 'top', 'perfeito', 'valeu', 'massa', 'pronto'
   ]);
 
   // ── Nome ──────────────────────────────────────────────────────────────────
@@ -552,26 +553,25 @@ REGRAS RÍGIDAS:
 - NÃO use informações de mensagens anteriores, apenas o texto atual
 - Se um campo não está na mensagem, simplesmente não inclua no JSON
 - nome: apenas se o cliente disse o nome dele explícita e claramente
-- bairro: apenas bairros reais de João Pessoa/PB (ex: Tambaú, Manaíra, Bessa, Torre, Aeroclube, Bancários, etc.). ATENÇÃO: "João Pessoa" é o nome da CIDADE, não é um bairro. Nunca use "joão pessoa" ou "joao pessoa" como bairro. Só inclua bairro se o cliente citou explicitamente um bairro.
+- bairro: apenas bairros reais de João Pessoa/PB. ATENÇÃO: "João Pessoa" é a CIDADE, não é bairro.
 - tipo_imovel: APENAS uma das 3 opções exatas: "casa", "apartamento" ou "comercial"
-- problema_principal: APENAS uma das 4 opções exatas:
-  * "calor" → cliente reclama de calor/sol esquentar demais
-  * "privacidade" → cliente quer que pessoas de fora não vejam o interior. Ex: "quem tá fora não me veja", "não quero que vejam dentro", "película espelhada"
-  * "claridade" → cliente reclama de excesso de luz/claridade/ofuscamento
-  * "estetica" → cliente quer modernizar/decorar
-- quantidade_janelas: apenas se o cliente citou um número de janelas/portas/superfícies (número inteiro)
-- pelicula_desejada: APENAS uma das opções: "fumê", "espelhada", "nano cerâmica", "fosca", "segurança" ou "não sei"
+- problema_principal: APENAS: "calor", "privacidade", "claridade" ou "estetica"
+- quantidade_janelas: apenas se o cliente citou um número (inteiro)
+- pelicula_desejada: APENAS "fumê", "espelhada", "nano cerâmica", "fosca", "segurança" ou "não sei"
+
+REGRA DE CORREÇÃO:
+- Se o cliente corrigir uma informação anterior, extraia o novo valor para substituir o antigo. Exemplo: "Meu nome não é show é Alex" -> {"nome": "Alex"}.
 
 Mensagem do cliente para analisar:
 "${texto}"
 
-Dados já conhecidos (NÃO repita estes no JSON, apenas extraia os NOVOS campos faltando):
+Dados já conhecidos:
 ${JSON.stringify(existingInfo, null, 2)}
 
-Campos que ainda faltam e devem ser extraídos SE presentes na mensagem:
-${faltando.join(', ')}
+Campos que ainda faltam ou sugeridos para revisão:
+${faltando.join(', ') || 'Nenhum, mas verifique se o cliente corrigiu algo.'}
 
-JSON (apenas os campos novos encontrados na mensagem):`;
+JSON (apenas os campos novos ou corrigidos):`;
 
   try {
     const response = await groq.chat.completions.create({
@@ -600,8 +600,8 @@ JSON (apenas os campos novos encontrados na mensagem):`;
 function _applyLLMExtraction(extracted, info) {
   let changed = false;
 
-  if (extracted.nome && !info.nome) { info.nome = extracted.nome; changed = true; }
-  if (extracted.bairro && !info.bairro) {
+  if (extracted.nome && extracted.nome !== info.nome) { info.nome = extracted.nome; changed = true; }
+  if (extracted.bairro && extracted.bairro !== info.bairro) {
     // Bloquear alucinacao da LLM: 'joao pessoa'/'jp' é a cidade, não um bairro
     const bairroNormalizado = (extracted.bairro || '').toLowerCase().trim();
     const ehCidade = /^jo[aã]o\s*pessoa$|^\bj\.?p\.?$/.test(bairroNormalizado);
@@ -611,16 +611,16 @@ function _applyLLMExtraction(extracted, info) {
       console.warn(`⚠️ LLM retornou bairro inválido (nome da cidade): "${extracted.bairro}" — ignorado.`);
     }
   }
-  if (extracted.tipo_imovel && !info.tipo_imovel) { info.tipo_imovel = extracted.tipo_imovel; changed = true; }
-  if (extracted.problema_principal && !info.problema_principal) {
+  if (extracted.tipo_imovel && extracted.tipo_imovel !== info.tipo_imovel) { info.tipo_imovel = extracted.tipo_imovel; changed = true; }
+  if (extracted.problema_principal && extracted.problema_principal !== info.problema_principal) {
     info.problema_principal = extracted.problema_principal; changed = true;
     const mapa = { calor: 'nano cerâmica', privacidade: 'espelhada', claridade: 'fumê', estetica: 'fosca' };
     if (!info.pelicula_indicada && mapa[extracted.problema_principal]) {
       info.pelicula_indicada = mapa[extracted.problema_principal];
     }
   }
-  if (extracted.quantidade_janelas && !info.quantidade_janelas) { info.quantidade_janelas = extracted.quantidade_janelas; changed = true; }
-  if (extracted.pelicula_desejada && !info.pelicula_desejada) { info.pelicula_desejada = extracted.pelicula_desejada; changed = true; }
+  if (extracted.quantidade_janelas && extracted.quantidade_janelas !== info.quantidade_janelas) { info.quantidade_janelas = extracted.quantidade_janelas; changed = true; }
+  if (extracted.pelicula_desejada && extracted.pelicula_desejada !== info.pelicula_desejada) { info.pelicula_desejada = extracted.pelicula_desejada; changed = true; }
 
   return { info, changed };
 }
@@ -637,8 +637,17 @@ async function _generateResponseWithLLM(jid, userMessage, nextStep, nextText) {
 
   const problemaLabel = { calor: 'Calor', privacidade: 'Privacidade', claridade: 'Claridade', estetica: 'Estética' };
 
+  // Fornecer histórico de mensagens para a LLM ler o contexto
+  const historicoChat = (conv?.mensagens || [])
+    .slice(-8)
+    .map(m => `[${m.de === 'bot' ? 'Bot' : 'Cliente'}]: ${m.conteudo || ''}`)
+    .join('\n');
+
   const systemPrompt = `Você é o assistente de WhatsApp da Películas Brasil, em João Pessoa-PB. O dono é Alex.
 Instalamos películas: Nano Cerâmica, Espelhada, Fumê, Fosca.
+
+== HISTÓRICO RECENTE DO CHAT ==
+${historicoChat || 'Nenhuma mensagem ainda'}
 
 == STATUS ATUAL ==
 Nome: ${info.nome || 'não coletado'}
@@ -1190,12 +1199,13 @@ async function processMessage(jid, userMessage) {
     return;
   }
 
-  // ═══ ETAPA 2: EXTRAÇÃO VIA LLM (se regex não pegou tudo) ═══
+  // ═══ ETAPA 2: EXTRAÇÃO VIA LLM (se regex não pegou tudo, ou cliente parece estar corrigindo) ═══
+  const podeEstarCorrigindo = /não é|nao e|escreveu errado|errou|corrige|meu nome é|meu nome e|não sou|nao sou/i.test(userMessage);
   const camposFaltando = !infoAposRegex.nome || !infoAposRegex.bairro ||
     !infoAposRegex.tipo_imovel || !infoAposRegex.problema_principal ||
     !infoAposRegex.quantidade_janelas;
 
-  if (camposFaltando && userMessage && userMessage.trim().length > 1) {
+  if ((camposFaltando || podeEstarCorrigindo) && userMessage && userMessage.trim().length > 1) {
     const { extracted } = await _extractWithLLM(userMessage, infoAposRegex);
     if (extracted && Object.keys(extracted).length > 0) {
       const { info: infoAposLLM } = _applyLLMExtraction(extracted, infoAposRegex);
