@@ -741,6 +741,7 @@ function _getNextStep(jid) {
   if (info._situacao === 'cancelamento') return { step: 'cancelamento', text: pickTemplate('resposta_cancelamento', { nome }), terminal: true };
 
   // Consultive flow — ask for nome and bairro separately if one is already known
+  if (!info.problema_principal) return { step: 'problema' };
   if (!info.nome && !info.bairro) return { step: 'nome_bairro', text: pickTemplate('pedir_nome_bairro') };
   if (!info.nome) return { step: 'nome', text: `Pode me dizer seu * nome *, ${info.bairro}? 😊` };
   if (!info.bairro) return { step: 'bairro', text: `${nome}, em qual * bairro * de João Pessoa você está ? 📍` };
@@ -996,50 +997,8 @@ async function processFlow(jid, userMessage = '') {
       msgLower.includes('nao, vou');
 
     if (escolheuSim) {
-      updateConversation(jid, { _boas_vindas_confirmada: true, _aguardando_escolha_inicial: false, _aguardando_problema: true });
-
-      const infoAtual = state.conversations[jid].informacoes_coletadas || {};
-      const nomeAtual = (infoAtual.nome || '').split(' ')[0];
-
-      // ── Pular para o primeiro campo ainda desconhecido ──────────────────
-      // Se o cliente já mandou tudo na primeira mensagem, podemos pular várias etapas
-
-      if (infoAtual.problema_principal) {
-        // Problema já conhecido → marcar como selecionado e enviar recomendação
-        updateConversation(jid, { _aguardando_problema: false, _problema_selecionado: true });
-        const recomKey = `recomendacao_${infoAtual.problema_principal} `;
-        const recomText = TEMPLATES[recomKey]
-          ? pickTemplate(recomKey, { nome: nomeAtual })
-          : `Ótimo${nomeAtual ? ', ' + nomeAtual : ''} ! 😊`;
-        await sendWithDelay(jid, { text: recomText });
-
-        // Verificar se o fluxo já está completo
-        if (isFlowComplete(state.conversations[jid])) {
-          await _handleFlowComplete(jid);
-          return true;
-        }
-
-        // Ir para próxima pergunta necessária
-        const next = _getNextStep(jid);
-        if (next.step !== 'completo' && next.text) {
-          const stepUpd = { _ultimo_step: next.step };
-          if (next.step === 'medidas' || next.step === 'medida_faltante') stepUpd._medidas_solicitadas = true;
-          updateConversation(jid, stepUpd);
-          await sendWithDelay(jid, { text: next.text });
-        } else if (next.step === 'completo') {
-          await _handleFlowComplete(jid);
-        }
-
-      } else if (infoAtual.nome || infoAtual.bairro || infoAtual.tipo_imovel || infoAtual.quantidade_janelas) {
-        // Já temos alguns dados mas não o problema → pedir o problema
-        updateConversation(jid, { _aguardando_problema: true });
-        await _sendProblemaComBotoes(jid);
-
-      } else {
-        // Nenhum dado → fluxo padrão (perguntar problema)
-        await _sendProblemaComBotoes(jid);
-      }
-      return true;
+      updateConversation(jid, { _boas_vindas_confirmada: true, _aguardando_escolha_inicial: false });
+      return false; // Permite que o processMessage continue a extração de outras coisas na mesma frase!
     }
 
     if (escolheuNao) {
@@ -1077,54 +1036,6 @@ async function processFlow(jid, userMessage = '') {
     await sendWithDelay(jid, {
       text: `Por favor, escolha uma das opções: \n\n * 1 * — ✅ Sim, pode tentar!\n * 2 * — ⏳ Não, vou aguardar o Alex`
     });
-    return true;
-  }
-
-  // ── ESTADO: Aguardando seleção do problema ─────────────────────────────
-  if (conv._aguardando_problema && !conv._problema_selecionado) {
-    const msgLower2 = (userMessage || '').toLowerCase().trim();
-
-    // Map button IDs and text to problem
-    let problema = null;
-    if (msgLower2 === 'prob_calor' || msgLower2 === '1' || /calor|quente|esquenta|térm/.test(msgLower2)) problema = 'calor';
-    else if (msgLower2 === 'prob_privacidade' || msgLower2 === '2' || /privacidade|privado|ver|veem/.test(msgLower2)) problema = 'privacidade';
-    else if (msgLower2 === 'prob_claridade' || msgLower2 === '3' || /clarid|sol demais|muito sol|ofuscam/.test(msgLower2)) problema = 'claridade';
-    else if (msgLower2 === 'prob_estetica' || msgLower2 === '4' || /estética|estética|bonito|moderno|decorar/.test(msgLower2)) problema = 'estetica';
-
-    if (problema) {
-      const mapa = { calor: 'nano cerâmica', privacidade: 'espelhada', claridade: 'fumê', estetica: 'fosca' };
-      const infoNow = { ...state.conversations[jid].informacoes_coletadas };
-      infoNow.problema_principal = problema;
-      infoNow.pelicula_indicada = mapa[problema];
-      updateConversation(jid, {
-        informacoes_coletadas: infoNow,
-        _aguardando_problema: false,
-        _problema_selecionado: true
-      });
-
-      // Send recommendation
-      const recomKey = `recomendacao_${problema} `;
-      const nome = (infoNow.nome || '').split(' ')[0];
-      const recomText = TEMPLATES[recomKey] ? pickTemplate(recomKey, { nome }) : `Ótimo! Vamos ver o que você precisa!`;
-      await sendWithDelay(jid, { text: recomText });
-
-      // Determine next question
-      const next = _getNextStep(jid);
-      if (next.step !== 'completo' && next.text) {
-        const pergunta = infoNow.nome ? next.text.replace(/^[^,]+,\s*/, '') : next.text;
-        const stepUpdates = { _ultimo_step: next.step };
-        if (next.step === 'medidas' || next.step === 'medida_faltante') stepUpdates._medidas_solicitadas = true;
-        updateConversation(jid, stepUpdates);
-        await sendWithDelay(jid, { text: pergunta });
-      }
-    } else {
-      // Didn't recognize → remind options
-      if (userMessage && userMessage.trim()) {
-        await sendWithDelay(jid, {
-          text: `Por favor, escolha uma das opções: \n * 1 * — 🌡️ Calor excessivo\n * 2 * — 👁️ Privacidade\n * 3 * — ☀️ Excesso de claridade\n * 4 * — 🎨 Estética / decoração`
-        });
-      }
-    }
     return true;
   }
 
@@ -1178,22 +1089,22 @@ async function processFlow(jid, userMessage = '') {
       // Só uma saudação — welcome genérico
       boasVindas =
         `${cumprimento} Tudo bem ?\n\n` +
-        `Aqui é o assistente do Alex da * Películas Brasil * 🪟\n` +
-        `Ele está em atendimento agora, mas posso agilizar pra você!\n\n` +
-        `Quer que eu te ajude ? `;
+        `Aqui é o assistente virtual do Alex da *Películas Brasil* 🪟 (ainda estou em fase de treinamento, mas posso ajudar!)\n` +
+        `O Alex está ocupado no momento.\n\n` +
+        `Quer que eu vá adiantando o seu orçamento? `;
     } else if (jaInformou.length > 0) {
       // Cliente já passou informações — citar e agradecer
       boasVindas =
         `${cumprimento} \n\n` +
         `Ótimo! Vi que você quer película para ${jaInformou.join(', ')}. 👍\n\n` +
-        `Sou o assistente do Alex da * Películas Brasil * — posso continuar coletando as informações para agilizar o orçamento!\n\n` +
+        `Sou o assistente virtual do Alex (ainda em fase de treinamento!) — posso continuar coletando as informações para agilizar o orçamento?\n\n` +
         `Posso seguir ? `;
     } else {
       // Mensagem com intenção mas sem dados extraídos (pergunta genérica, etc.)
       boasVindas =
         `${cumprimento} \n\n` +
-        `Aqui é o assistente do Alex da * Películas Brasil * 🪟✨\n` +
-        `Posso ajudar a agilizar seu atendimento enquanto o Alex finaliza outro cliente!\n\n` +
+        `Aqui é o assistente virtual do Alex da *Películas Brasil* 🪟✨ (estou em treinamento!)\n` +
+        `Posso ajudar a agilizar seu atendimento enquanto o Alex tira uma dúvida de outro cliente!\n\n` +
         `Quer que eu continue?`;
     }
 
@@ -1244,13 +1155,27 @@ async function processMessage(jid, userMessage) {
   const next = _getNextStep(jid);
 
   if (next.step === 'completo') {
-    await _handleFlowComplete(jid);
-    return;
+    // LLM pode responder finalizando, ou podemos simplesmente ver se ele disse 'obrigado'
+    if (state.conversations[jid].resumo_enviado) {
+      if (/obrigad(o|a)|show|valeu|agrade|ok|tudo bem|perfeito/i.test(userMessage.trim())) {
+        await sendWithDelay(jid, { text: 'Por nada! O Alex já foi avisado e entra em contato em breve. Até logo! 👋' });
+        updateConversation(jid, { status: 'encerrada' });
+      }
+      return;
+    } else {
+      await _handleFlowComplete(jid);
+      return;
+    }
   }
 
   if (next.terminal) {
-    if (next.step === 'cancelamento') updateConversation(jid, { status: 'encerrada' });
+    if (next.step === 'cancelamento' || next.step === 'automotivo') updateConversation(jid, { status: 'encerrada' });
     await sendWithDelay(jid, { text: next.text });
+    return;
+  }
+
+  if (next.step === 'problema') {
+    await _sendProblemaComBotoes(jid);
     return;
   }
 
