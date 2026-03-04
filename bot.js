@@ -1344,8 +1344,12 @@ async function handleImage(jid, msg) {
         await processMessage(jid, caption);
       } else {
         const next = _getNextStep(jid);
-        if (next.step === 'completo') await _handleFlowComplete(jid);
-        else if (next.text) await sendWithDelay(jid, { text: next.text });
+        if (next.step === 'completo') {
+          await _handleFlowComplete(jid);
+        } else if (next.text) {
+          const response = await _generateResponseWithLLM(jid, 'Acabei de enviar uma foto', next.step, next.text);
+          await sendWithDelay(jid, { text: response });
+        }
       }
     }
   } catch (err) {
@@ -1368,7 +1372,20 @@ async function handleVideo(jid, msg) {
       const info = { ...conv.informacoes_coletadas, fotos_recebidas: true };
       updateConversation(jid, { informacoes_coletadas: info });
     }
-    await sendWithDelay(jid, { text: 'Recebi seu vídeo! Para agilizar, pode descrever por texto também? 😊' });
+
+    await sendWithDelay(jid, { text: 'Recebi seu vídeo! 🎥' });
+
+    if (isFlowComplete(state.conversations[jid])) {
+      await _handleFlowComplete(jid);
+    } else {
+      const next = _getNextStep(jid);
+      if (next.step === 'completo') {
+        await _handleFlowComplete(jid);
+      } else if (next.text) {
+        const response = await _generateResponseWithLLM(jid, 'Acabei de enviar um vídeo', next.step, next.text);
+        await sendWithDelay(jid, { text: response });
+      }
+    }
   } catch (err) {
     console.error('❌ Erro ao processar vídeo:', err.message);
   }
